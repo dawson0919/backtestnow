@@ -305,20 +305,37 @@ export default function App() {
             let maxDrawdownPct = 0;
             let maxDrawdownAbs = 0;
 
-            const basePnlWin = currentCapital * 0.04;
-            const basePnlLoss = currentCapital * 0.015;
+            const initialCapital = currentCapital;
+            const cyclePhaseOffset = Math.random() * Math.PI * 2; // 隨機起始週期位置
 
             const generatedTrades = Array.from({ length: totalTrades }).map((_, i) => {
-                const isWin = Math.random() > 0.35;
+                // 模擬真實市場的行情循環 (Market Regimes): 引入 Sine Wave 造成連贏或是連虧 (Drawdowns)
+                const cycle = Math.sin(cyclePhaseOffset + (i / totalTrades) * Math.PI * 4); // 大約會有兩波多空循環
+                let dynamicWinRate = 0.48 + (cycle * 0.15); // 勝率在 33% 到 63% 之間波動
+
+                if (paramMode === 'ai') dynamicWinRate += 0.05; // AI 優化模式稍微提升整體勝率
+
+                const isWin = Math.random() < dynamicWinRate;
                 const isLong = Math.random() > 0.5;
                 const price = (assetType === 'crypto' ? 60000 : 150) + (Math.random() * 5000 - 2500);
 
-                const pnl = isWin
-                    ? Number((Math.random() * basePnlWin + basePnlWin * 0.5).toFixed(2))
-                    : Number(-(Math.random() * basePnlLoss + basePnlLoss * 0.5).toFixed(2));
+                // 計算損益比例 (以初始資金為基底，避免複利無限放大)
+                let pnlRatio;
+                if (isWin) {
+                    pnlRatio = 0.01 + Math.random() * 0.035; // 賺的時候大約 1% ~ 4.5%
+                } else {
+                    pnlRatio = -(0.005 + Math.random() * 0.025); // 賠的時候大約 0.5% ~ 3%
+                }
+
+                // 加入肥尾效應 (Fat tails)，市場偶發的黑天鵝或暴衝事件 (3% 機率)
+                if (Math.random() < 0.03) {
+                    pnlRatio *= (Math.random() > 0.4 ? 2.5 : -2.5); // 可能發生防守不住的大賠或意外大抱到底的大賺
+                }
+
+                const pnl = Number((initialCapital * pnlRatio).toFixed(2));
 
                 // 產生歷史交易日期，越後面的數組索引日期越新
-                const d = new Date(Date.now() - (totalTrades - i) * 86400000 * (timeframe.includes('D') ? 1 : 0.2));
+                const d = new Date(Date.now() - (totalTrades - i) * 86400000 * (timeframe.includes('D') ? 1 : 0.25));
 
                 return {
                     id: i + 1,
@@ -362,7 +379,6 @@ export default function App() {
             // 為了避免圖表渲染過濾雜亂，我們壓縮並取樣資料點
             const sampledChartData = chartData.filter((_, idx) => idx % Math.ceil(chartData.length / 50) === 0 || idx === chartData.length - 1);
 
-            const initialCapital = capitalConfig && capitalConfig.value ? Number(capitalConfig.value) : 10000;
             const netProfit = currentCapital - initialCapital;
             const netProfitPct = ((netProfit / initialCapital) * 100).toFixed(2);
             const winRate = ((winningTrades / totalTrades) * 100).toFixed(1);
