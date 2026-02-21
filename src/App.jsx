@@ -8,15 +8,18 @@ export default function App() {
     const { user } = useUser();
     const [step, setStep] = useState(1); // 1: Input, 2: Processing, 3: Results
 
-    // Step 1 Form state
+    // -------------------------------------------------------------------------
+    // === 步驟 1 (Step 1)：環境與參數設定狀態 ===
+    // -------------------------------------------------------------------------
     const [asset, setAsset] = useState('BTCUSDT');
-    const [assetType, setAssetType] = useState('crypto'); // 'crypto' or 'futures'
+    const [assetType, setAssetType] = useState('crypto'); // 'crypto' 表示加密貨幣, 'futures' 表示期貨
     const [capitalConfig, setCapitalConfig] = useState({ mode: 'fixed', value: 100 });
     const [code, setCode] = useState('//@version=5\nindicator("My Custom Strategy")\n');
-    const [paramMode, setParamMode] = useState('manual'); // 'manual' or 'ai'
-    const [iterations, setIterations] = useState(1000);
-    const [timeframe, setTimeframe] = useState('1H');
+    const [paramMode, setParamMode] = useState('manual'); // 'manual' 手動模式 或 'ai' AI代理模式
+    const [iterations, setIterations] = useState(1000); // 蒙地卡羅/參數窮舉回測的迭代次數
+    const [timeframe, setTimeframe] = useState('1H'); // K線時間週期
 
+    // 資產清單 (自 Supabase 資料庫撈取)
     const [dbAssets, setDbAssets] = useState({ crypto: [], futures: [] });
     const [isLoadingAssets, setIsLoadingAssets] = useState(true);
 
@@ -30,14 +33,19 @@ export default function App() {
         { name: 'trailingStop', min: 0.5, max: 5, desc: '移動停利 (Trailing Stop %)，隨著利潤擴大逐步提高出場線保護利潤。' }
     ]);
 
-    // Step 2 Progress state
-    const [progress, setProgress] = useState(0);
-    const [logs, setLogs] = useState([]);
+    // -------------------------------------------------------------------------
+    // === 步驟 2 (Step 2)：回測進度與終端機輸出 ===
+    // -------------------------------------------------------------------------
+    const [progress, setProgress] = useState(0); // 讀條進度 (0-100)
+    const [logs, setLogs] = useState([]); // 給使用者看的操作日誌陣列
 
-    // Step 3 Results state
-    const [results, setResults] = useState(null);
-    const [activeTab, setActiveTab] = useState('summary'); // 'overview' | 'summary' | 'trades' | 'export'
+    // -------------------------------------------------------------------------
+    // === 步驟 3 (Step 3)：回測結果與圖表介面 ===
+    // -------------------------------------------------------------------------
+    const [results, setResults] = useState(null); // 回測結果的資料結構
+    const [activeTab, setActiveTab] = useState('summary'); // 當前選中的分析分頁
 
+    // 從 Supabase 抓取可交易的市場資產列表，這會在組件掛載時觸發一次
     useEffect(() => {
         // Fetch DB Assets
         const fetchAssets = async () => {
@@ -61,8 +69,11 @@ export default function App() {
         fetchAssets();
     }, []);
 
-    // Extract dynamic parameters from PineScript code
+    // -------------------------------------------------------------------------
+    // === 核心功能：動態從 PineScript 程式碼中解析萃取使用者參數 ===
+    // -------------------------------------------------------------------------
     useEffect(() => {
+        // 這是作為回測常駐防禦與風控機制的「預設底層參數」，無論腳本長怎樣都會掛載
         const defaultRiskParams = [
             { name: 'stopLoss', min: 1, max: 10, desc: '硬性止損百分比 (Stop Loss %)，確保風控在單筆交易中的最大虧損界限。' },
             { name: 'takeProfit', min: 2, max: 20, desc: '強制止盈百分比 (Take Profit %)，達到預期報酬即落袋為安。' },
@@ -70,26 +81,27 @@ export default function App() {
             { name: 'trailingStop', min: 0.5, max: 5, desc: '移動停利 (Trailing Stop %)，隨著利潤擴大逐步提高出場線保護利潤。' }
         ];
 
+        // 使用 setTimeout 防抖動處理 (Debounce)，避免使用者每打一個字就重新計算
         const timer = setTimeout(() => {
-            const lines = code.split('\n');
+            const lines = code.split('\n'); // 將腳本按行切開
             const extractedParams = [];
 
             lines.forEach(line => {
                 const trimmed = line.trim();
-                // Ignore comments
+                // 忽略被註解掉的那一行程式碼
                 if (trimmed.startsWith('//')) return;
 
-                // Match PineScript input assignments: varName = input(123) or varName = input.int(123, title="...")
-                // Pattern: matches identifier, equals, input, optional dot int/float, parameters
+                // 【強大正則匹配】：尋找 TradingView 變數賦值，例如 varName = input(123) 或是 varName = input.int(123, title="...")
                 const match = trimmed.match(/([a-zA-Z0-9_]+)\s*=\s*input(?:\.(?:int|float))?\(/);
 
                 if (match) {
-                    const varName = match[1];
+                    const varName = match[1]; // 取出在腳本中宣告的變數名稱
+                    // 嘗試尋找 title 屬性來作為畫面上的中文提示
                     const titleMatch = trimmed.match(/title\s*=\s*['"]([^'"]+)['"]/);
                     const desc = titleMatch ? `(自定義參數) ${titleMatch[1]}` : `(自定義腳本參數) ${varName}`;
 
-                    // Try to guess default value to form min/max ranges
                     let defVal = null;
+                    // 嘗試在一開始或是透過 defval 找出預設數字
                     const firstArgMatch = trimmed.match(/input(?:\.\w+)?\(\s*([\d.]+)/);
 
                     if (firstArgMatch && !isNaN(parseFloat(firstArgMatch[1]))) {
@@ -99,7 +111,7 @@ export default function App() {
                         if (defvalMatch) defVal = parseFloat(defvalMatch[1]);
                     }
 
-                    // Generate sensible min/max bounds based on the default value found
+                    // 根據預設值大小，幫使用者生成一個合理的初始上下限掃描空間 (Min / Max Bound)
                     let min = 1;
                     let max = 100;
                     if (defVal !== null) {
@@ -108,7 +120,7 @@ export default function App() {
                         if (max <= min) max = min + 10;
                     }
 
-                    // Look for explicit minval/maxval overrides
+                    // 如果使用者本就明確賦予腳本 minval 或 maxval 的標籤，優先依照使用者定義覆寫！
                     const explicitMin = trimmed.match(/minval\s*=\s*([-\d.]+)/);
                     if (explicitMin) min = parseFloat(explicitMin[1]);
 
@@ -124,7 +136,7 @@ export default function App() {
                 }
             });
 
-            // If nothing extracted, provide defaults
+            // 如果什麼都沒抓到，就隨便配個兩組當做範例
             if (extractedParams.length === 0) {
                 extractedParams.push(
                     { name: 'length', min: 10, max: 50, desc: '技術指標的回溯週期，影響趨勢判定與交易訊號的靈敏度。' },
@@ -132,7 +144,7 @@ export default function App() {
                 );
             }
 
-            // Only update if the parameter naming structurally changes to prevent jumping UI inputs
+            // 只有在參數長度變動或結構不一樣時才更新 React State，避免使用者在輸入框打字時因為反覆渲染而跳掉 (閃爍防呆機制)
             setParams(prev => {
                 const updatedList = [...extractedParams, ...defaultRiskParams];
                 const currentNames = prev.map(p => p.name).join(',');
@@ -148,37 +160,48 @@ export default function App() {
         return () => clearTimeout(timer);
     }, [code]);
 
+    // -------------------------------------------------------------------------
+    // === 介面輔助功能：計算並回傳預估執行時間字串 ===
+    // -------------------------------------------------------------------------
     const estimatedMinutes = useMemo(() => {
-        // mock estimation: 0.1s per backtest group
-        // total time in seconds = iterations * 0.1
-        // let's cap the visual processing demo so it doesn't take 16 minutes in real life for the demo
+        // 假設伺服器每組參數測試約 0.1 秒 (前端為展示則不跑那麼久)
         const timeInSeconds = iterations * 0.1;
         if (timeInSeconds < 60) return `${Math.ceil(timeInSeconds)} 秒`;
         return `${Math.ceil(timeInSeconds / 60)} 分鐘`;
     }, [iterations]);
 
+    // -------------------------------------------------------------------------
+    // === 介面輔助功能：增加操作日誌至畫面輸出區 (Console Log 效果) ===
+    // -------------------------------------------------------------------------
     const addLog = (msg, type = 'normal') => {
         const time = new Date().toLocaleTimeString('en-US', { hour12: false });
         setLogs(prev => [...prev, { time, msg, type }]);
     };
 
+    // -------------------------------------------------------------------------
+    // === 觸發：修改畫面當中單一輸入框的數值 ===
+    // -------------------------------------------------------------------------
     const handleParamChange = (index, field, value) => {
         const newParams = [...params];
         newParams[index][field] = value;
         setParams(newParams);
     };
 
+    // -------------------------------------------------------------------------
+    // === 核心觸發器：啟動模擬回測工作串流 ===
+    // -------------------------------------------------------------------------
     const handleStartBacktest = () => {
         if (!code) {
             alert("請上傳或貼上 PineScript 程式碼！");
             return;
         }
 
+        // 切換至第二步驟畫面 (載入與進度展示)
         setStep(2);
         setProgress(0);
         setLogs([]);
 
-        // The demo animation sequence (much faster than indicated time)
+        // 模擬伺服器執行引擎生命週期與終端機文字反饋
         addLog("Initializing Backtest Engine Ver. 2.4.1", "info");
 
         if (paramMode === 'ai') {
@@ -206,7 +229,7 @@ export default function App() {
             addLog(`Commencing Monte Carlo Optimization with ${iterations} iterations!`, "highlight");
         }, 4500);
 
-        // Simulate batch progress
+        // 模擬分批運算的里程碑進度條
         setTimeout(() => {
             setProgress(75);
             addLog(`[Batch 1-${Math.floor(iterations / 2)}] Evaluated. Highest ROI so far: 184.2%`);
@@ -217,6 +240,7 @@ export default function App() {
             addLog(`[Batch ${Math.floor(iterations / 2)}-${iterations}] Evaluated. Identifying global maximum...`);
         }, 8500);
 
+        // 模擬完成後整理資料準備推給前台顯示報表
         setTimeout(() => {
             setProgress(100);
             addLog(`Optimization Complete! Generating TradingView-style performance report.`, 'success');
@@ -225,6 +249,7 @@ export default function App() {
             const secondBestParamsObj = {};
             const thirdBestParamsObj = {};
 
+            // 針對每一項被提取出來或預設的參數，隨機或依據 AI 模式製造三個勝出的參數群組資料 (這部分正式系統會來自於後端 Python 傳回)
             params.forEach(p => {
                 const mid = Math.floor((Number(p.min) + Number(p.max)) / 2);
                 if (p.name === 'stopLoss') {
@@ -250,21 +275,23 @@ export default function App() {
                 }
             });
 
-            // Write back AI optimized params (Rank #1) into the code user provided for export
+            // -------------------------------------------------------------------------
+            // === 核心功能：撰寫並覆寫新的腳本內容 (把最佳獲利的變數回填給用戶) ===
+            // -------------------------------------------------------------------------
             let rewrittenCode = code;
             Object.entries(bestParamsObj).forEach(([key, val]) => {
-                if (String(val).includes('%')) val = parseFloat(val); // strip % for insertion
+                if (String(val).includes('%')) val = parseFloat(val);
 
-                // match: varName = input(10,
                 const regex1 = new RegExp(`(${key}\\s*=\\s*input(?:\\.\\w+)?\\(\\s*)([\\d.]+)`, 'g');
                 rewrittenCode = rewrittenCode.replace(regex1, `$1${val}`);
 
-                // match explicitly: defval=10
                 const regex2 = new RegExp(`(${key}\\s*=\\s*input(?:\\.\\w+)?\\(.*?(?:defval\\s*=\\s*)(['"]?))([\\d.]+)`, 'g');
                 rewrittenCode = rewrittenCode.replace(regex2, `$1${val}`);
             });
 
             rewrittenCode = `// ------------------------------------------------------------------\n// 🔥 AI Optimized Parameters - Generated by BacktestNOW\n// Target Asset: ${asset} | Timeframe: ${timeframe} | Est. ROI: +384.50%\n// ------------------------------------------------------------------\n\n` + rewrittenCode;
+
+            const currencySymbol = assetType === 'crypto' ? 'USDT' : 'USD';
 
             setResults({
                 asset,
