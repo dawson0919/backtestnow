@@ -15,6 +15,7 @@ export default function App() {
     const [code, setCode] = useState('//@version=5\nindicator("My Custom Strategy")\n');
     const [paramMode, setParamMode] = useState('manual'); // 'manual' or 'ai'
     const [iterations, setIterations] = useState(1000);
+    const [timeframe, setTimeframe] = useState('1H');
 
     const [dbAssets, setDbAssets] = useState({ crypto: [], futures: [] });
     const [isLoadingAssets, setIsLoadingAssets] = useState(true);
@@ -23,7 +24,10 @@ export default function App() {
     const [params, setParams] = useState([
         { name: 'length', min: 10, max: 50, desc: '技術指標的回溯週期，影響趨勢判定與交易訊號的靈敏度。' },
         { name: 'multiplier', min: 1.0, max: 4.0, desc: 'ATR 或標準差的乘數，用以動態擴增止損範圍與信道寬度。' },
-        { name: 'stopLoss', min: 1, max: 10, desc: '硬性止損百分比 (Stop Loss %)，確保風控在單筆交易中的最大虧損界限。' }
+        { name: 'stopLoss', min: 1, max: 10, desc: '硬性止損百分比 (Stop Loss %)，確保風控在單筆交易中的最大虧損界限。' },
+        { name: 'takeProfit', min: 2, max: 20, desc: '強制止盈百分比 (Take Profit %)，達到預期報酬即落袋為安。' },
+        { name: 'holdingTime', min: 1, max: 24, desc: '最長持倉根數 (Max Holding Bars)，避免因盤整耗損資金利用率。' },
+        { name: 'trailingStop', min: 0.5, max: 5, desc: '移動停利 (Trailing Stop %)，隨著利潤擴大逐步提高出場線保護利潤。' }
     ]);
 
     // Step 2 Progress state
@@ -58,7 +62,7 @@ export default function App() {
     }, []);
 
     const estimatedMinutes = useMemo(() => {
-        // mock estimation: 0.1s per backtest group 
+        // mock estimation: 0.1s per backtest group
         // total time in seconds = iterations * 0.1
         // let's cap the visual processing demo so it doesn't take 16 minutes in real life for the demo
         const timeInSeconds = iterations * 0.1;
@@ -93,7 +97,10 @@ export default function App() {
             setParams([
                 { name: 'length', min: 5, max: 100, desc: '偵測到趨勢指標！延長回溯週期搜索空間，以避免短線雜訊干擾。' },
                 { name: 'multiplier', min: 1.5, max: 5.0, desc: '因應震盪放大，AI 建議拉高乘數以防止過早被洗出場。' },
-                { name: 'stopLoss', min: 2, max: 15, desc: '自動防禦機制：放大止損並配合尾隨止盈使用。' }
+                { name: 'stopLoss', min: 2, max: 15, desc: '動態防禦機制：放大初始止損，並依賴移動停利保護。' },
+                { name: 'takeProfit', min: 5, max: 30, desc: '波段策略：目標放遠以捕捉完整趨勢波段。' },
+                { name: 'holdingTime', min: 5, max: 48, desc: '給予趨勢發展時間，延長最大允許持倉時間。' },
+                { name: 'trailingStop', min: 1.0, max: 8.0, desc: '趨勢跟隨的核心：以較寬的跟隨距離持續捕捉獲利。' }
             ]);
         }
 
@@ -157,12 +164,41 @@ export default function App() {
                 totalTrades: "452",
                 avgTrade: `+45.20 ${currencySymbol}`,
                 avgBarsInTrade: "45",
-                bestParams: {
-                    length: paramMode === 'ai' ? 21 : Math.floor((Number(params[0].min) + Number(params[0].max)) / 2),
-                    multiplier: paramMode === 'ai' ? 2.6 : 2.5,
-                    stopLoss: "3.5%",
-                    takeProfit: "8.2%"
-                },
+                topStrategies: [
+                    {
+                        roi: "+384.50%",
+                        params: {
+                            length: paramMode === 'ai' ? 21 : Math.floor((Number(params[0].min) + Number(params[0].max)) / 2),
+                            multiplier: paramMode === 'ai' ? 2.6 : 2.5,
+                            stopLoss: "3.5%",
+                            takeProfit: "8.2%",
+                            holdingTime: "12 bars",
+                            trailingStop: "1.5%"
+                        }
+                    },
+                    {
+                        roi: "+310.20%",
+                        params: {
+                            length: paramMode === 'ai' ? 18 : Math.floor((Number(params[0].min) + Number(params[0].max)) / 2) - 2,
+                            multiplier: paramMode === 'ai' ? 2.2 : 2.1,
+                            stopLoss: "4.0%",
+                            takeProfit: "7.0%",
+                            holdingTime: "8 bars",
+                            trailingStop: "2.0%"
+                        }
+                    },
+                    {
+                        roi: "+285.45%",
+                        params: {
+                            length: paramMode === 'ai' ? 25 : Math.floor((Number(params[0].min) + Number(params[0].max)) / 2) + 5,
+                            multiplier: paramMode === 'ai' ? 3.0 : 2.8,
+                            stopLoss: "2.5%",
+                            takeProfit: "10.0%",
+                            holdingTime: "16 bars",
+                            trailingStop: "1.2%"
+                        }
+                    }
+                ],
                 // Generate a mock trade history matching the total trades
                 trades: Array.from({ length: 452 }).map((_, i) => {
                     const isWin = Math.random() > 0.3;
@@ -261,6 +297,14 @@ export default function App() {
                                                     {dbAssets.futures.length === 0 && <option value="GC!">Loading assets...</option>}
                                                 </>
                                             )}
+                                        </select>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <label className="form-label">Timeframe (週期)</label>
+                                        <select className="form-select" value={timeframe} onChange={e => setTimeframe(e.target.value)}>
+                                            <option value="1H">1H</option>
+                                            <option value="4H">4H</option>
+                                            <option value="DAILY">DAILY</option>
                                         </select>
                                     </div>
                                 </div>
@@ -516,15 +560,26 @@ export default function App() {
                                             </ResponsiveContainer>
                                         </div>
 
-                                        <div style={{ background: 'var(--bg-panel)', padding: '1.5rem', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ marginTop: '2rem' }}>
                                             <h4 style={{ color: 'var(--text-highlight)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <Target size={18} color="var(--accent)" /> AI Discovered Best Parameters
+                                                <Target size={18} color="var(--accent)" /> Top 3 AI Discovered Parameter Sets
                                             </h4>
-                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem' }}>
-                                                {Object.entries(results.bestParams).map(([key, val]) => (
-                                                    <div key={key} style={{ background: 'var(--bg-surface)', padding: '1rem', borderRadius: '0.5rem', border: '1px solid rgba(255,255,255,0.05)' }}>
-                                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>{key}</div>
-                                                        <div style={{ color: 'var(--text-highlight)', fontSize: '1.2rem', fontWeight: 'bold' }}>{val}</div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                                {results.topStrategies.map((strategy, idx) => (
+                                                    <div key={idx} style={{ background: 'var(--bg-panel)', padding: '1.5rem', borderRadius: '0.5rem', border: `1px solid ${idx === 0 ? 'var(--success)' : 'var(--border-color)'}`, position: 'relative' }}>
+                                                        {idx === 0 && <div style={{ position: 'absolute', top: 0, right: 0, background: 'var(--success)', color: '#000', padding: '0.2rem 1rem', fontSize: '0.8rem', fontWeight: 'bold', borderBottomLeftRadius: '0.5rem', borderTopRightRadius: '0.5rem' }}>BEST ROI</div>}
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                                            <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--text-highlight)' }}>Rank #{idx + 1}</div>
+                                                            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: idx === 0 ? 'var(--success)' : 'var(--text-secondary)' }}>{strategy.roi} Net Profit</div>
+                                                        </div>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1rem' }}>
+                                                            {Object.entries(strategy.params).map(([key, val]) => (
+                                                                <div key={key} style={{ background: 'var(--bg-surface)', padding: '0.8rem', borderRadius: '0.5rem', border: '1px solid rgba(255,255,255,0.02)' }}>
+                                                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', marginBottom: '0.3rem' }}>{key}</div>
+                                                                    <div style={{ color: 'var(--text-highlight)', fontSize: '1.1rem', fontWeight: 'bold' }}>{val}</div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
                                                     </div>
                                                 ))}
                                             </div>
