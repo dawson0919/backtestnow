@@ -19,11 +19,11 @@ export default function App() {
     const [dbAssets, setDbAssets] = useState({ crypto: [], futures: [] });
     const [isLoadingAssets, setIsLoadingAssets] = useState(true);
 
-    // Custom Param Constraints
+    // Custom Param Constraints with AI recognition annotations
     const [params, setParams] = useState([
-        { name: 'length', min: 10, max: 50 },
-        { name: 'multiplier', min: 1.0, max: 4.0 },
-        { name: 'stopLoss', min: 1, max: 10 }
+        { name: 'length', min: 10, max: 50, desc: '技術指標的回溯週期，影響趨勢判定與交易訊號的靈敏度。' },
+        { name: 'multiplier', min: 1.0, max: 4.0, desc: 'ATR 或標準差的乘數，用以動態擴增止損範圍與信道寬度。' },
+        { name: 'stopLoss', min: 1, max: 10, desc: '硬性止損百分比 (Stop Loss %)，確保風控在單筆交易中的最大虧損界限。' }
     ]);
 
     // Step 2 Progress state
@@ -86,6 +86,16 @@ export default function App() {
         setStep(2);
         setProgress(0);
         setLogs([]);
+
+        // MOCK AI CODE ANALYZER
+        // 當使用者按下執行時，模擬 AI 抓取程式碼中的參數，給予新的一組組合 (概念展示)
+        if (code.includes('sma') || code.includes('rsi') || code.includes('macd')) {
+            setParams([
+                { name: 'length', min: 5, max: 100, desc: '偵測到趨勢指標！延長回溯週期搜索空間，以避免短線雜訊干擾。' },
+                { name: 'multiplier', min: 1.5, max: 5.0, desc: '因應震盪放大，AI 建議拉高乘數以防止過早被洗出場。' },
+                { name: 'stopLoss', min: 2, max: 15, desc: '自動防禦機制：放大止損並配合尾隨止盈使用。' }
+            ]);
+        }
 
         // The demo animation sequence (much faster than indicated time)
         addLog("Initializing Backtest Engine Ver. 2.4.1", "info");
@@ -152,7 +162,25 @@ export default function App() {
                     multiplier: paramMode === 'ai' ? 2.6 : 2.5,
                     stopLoss: "3.5%",
                     takeProfit: "8.2%"
-                }
+                },
+                // Generate a mock trade history matching the total trades
+                trades: Array.from({ length: 452 }).map((_, i) => {
+                    const isWin = Math.random() > 0.3;
+                    const isLong = Math.random() > 0.5;
+                    const price = (60000 + (Math.random() * 5000 - 2500)).toFixed(2);
+                    const pnl = isWin ? +(Math.random() * 800 + 100).toFixed(2) : -(Math.random() * 300 + 50).toFixed(2);
+                    // generate a realistic receding date starting from today
+                    const d = new Date(Date.now() - (452 - i) * 60480000);
+                    return {
+                        id: 452 - i,
+                        type: isLong ? 'Entry Long' : (i % 2 === 0 ? 'Exit Short' : 'Exit Long'),
+                        typeColor: isLong ? 'var(--success)' : 'var(--danger)',
+                        signal: isWin ? 'Take Profit' : (isLong ? 'MA Cross' : 'Stop Loss'),
+                        date: d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
+                        price: `$${price}`,
+                        pnl: pnl > 0 ? `+${pnl}` : pnl
+                    };
+                }).reverse()
             });
             setStep(3);
         }, 10000); // Demo completes in 10s regardless of requested time for UX
@@ -325,15 +353,26 @@ export default function App() {
 
                                 {paramMode === 'manual' && (
                                     <div className="form-group" style={{ background: 'var(--bg-panel)', padding: '1.5rem', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
-                                        <label className="form-label" style={{ marginBottom: '1rem' }}>Define Limits (Min / Max)</label>
-                                        {params.map((p, idx) => (
-                                            <div key={idx} className="param-row">
-                                                <span style={{ width: '80px', fontSize: '0.9rem', color: 'var(--text-primary)' }}>{p.name}</span>
-                                                <input type="number" className="form-input" value={p.min} onChange={e => handleParamChange(idx, 'min', e.target.value)} placeholder="Min" />
-                                                <span style={{ color: 'var(--text-secondary)' }}>—</span>
-                                                <input type="number" className="form-input" value={p.max} onChange={e => handleParamChange(idx, 'max', e.target.value)} placeholder="Max" />
-                                            </div>
-                                        ))}
+                                        <label className="form-label" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <Settings size={18} /> Define Limits (AI 智能輔助解析參數)
+                                        </label>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                            {params.map((p, idx) => (
+                                                <div key={idx} style={{ background: 'var(--bg-surface)', padding: '1.2rem', borderRadius: '0.5rem', border: '1px solid rgba(255,255,255,0.05)' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.8rem' }}>
+                                                        <span style={{ fontSize: '1rem', fontWeight: 'bold', color: 'var(--text-highlight)', textTransform: 'uppercase' }}>{p.name}</span>
+                                                        <div className="param-row" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                                            <input type="number" className="form-input" style={{ width: '80px', textAlign: 'center' }} value={p.min} onChange={e => handleParamChange(idx, 'min', e.target.value)} placeholder="Min" />
+                                                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                                                            <input type="number" className="form-input" style={{ width: '80px', textAlign: 'center' }} value={p.max} onChange={e => handleParamChange(idx, 'max', e.target.value)} placeholder="Max" />
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.5', paddingLeft: '0.5rem', borderLeft: '2px solid var(--accent)' }}>
+                                                        {p.desc}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
                                 )}
 
@@ -553,25 +592,34 @@ export default function App() {
                             )}
 
                             {activeTab === 'trades' && (
-                                <div className="glass-panel" style={{ padding: '2rem' }}>
-                                    <table className="tv-table">
-                                        <thead>
+                                <div className="glass-panel" style={{ padding: '0', maxHeight: '600px', overflowY: 'auto' }}>
+                                    <table className="tv-table" style={{ margin: 0 }}>
+                                        <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-panel)', zIndex: 10, borderBottom: '1px solid var(--border-color)' }}>
                                             <tr>
-                                                <th>Trade #</th>
+                                                <th style={{ padding: '1rem 2rem' }}>Trade #</th>
                                                 <th>Type</th>
-                                                <th>Signal</th>
+                                                <th>Signal Name</th>
                                                 <th>Date / Time</th>
-                                                <th>Price</th>
-                                                <th>Profit/Loss</th>
+                                                <th>Price Executed</th>
+                                                <th>Net P&L</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {/* Mock data */}
-                                            <tr><td>452</td><td style={{ color: 'var(--danger)' }}>Exit Short</td><td>Take Profit</td><td>2026-02-21 14:30</td><td>$61,240.50</td><td style={{ color: 'var(--success)' }}>+340.20</td></tr>
-                                            <tr><td>451</td><td style={{ color: 'var(--danger)' }}>Entry Short</td><td>AI Trend</td><td>2026-02-21 08:15</td><td>$61,580.70</td><td>-</td></tr>
-                                            <tr><td>450</td><td style={{ color: 'var(--success)' }}>Exit Long</td><td>Trailing Stop</td><td>2026-02-19 22:00</td><td>$60,100.00</td><td style={{ color: 'var(--success)' }}>+850.50</td></tr>
-                                            <tr><td>449</td><td style={{ color: 'var(--success)' }}>Entry Long</td><td>MA Cross</td><td>2026-02-18 10:45</td><td>$59,249.50</td><td>-</td></tr>
-                                            <tr><td>448</td><td style={{ color: 'var(--danger)' }}>Exit Short</td><td>Stop Loss</td><td>2026-02-15 16:30</td><td>$58,400.00</td><td style={{ color: 'var(--danger)' }}>-150.00</td></tr>
+                                            {results.trades.map(trade => (
+                                                <tr key={trade.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                                    <td style={{ paddingLeft: '2rem', color: 'var(--text-secondary)' }}>{trade.id}</td>
+                                                    <td style={{ color: trade.typeColor, fontWeight: '500' }}>{trade.type}</td>
+                                                    <td style={{ color: 'var(--text-primary)' }}>{trade.signal}</td>
+                                                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{trade.date}</td>
+                                                    <td style={{ fontFamily: 'monospace' }}>{trade.price}</td>
+                                                    <td style={{
+                                                        color: trade.pnl.toString().includes('+') ? 'var(--success)' : (trade.pnl === '-' ? 'inherit' : 'var(--danger)'),
+                                                        fontWeight: 'bold'
+                                                    }}>
+                                                        {trade.pnl}
+                                                    </td>
+                                                </tr>
+                                            ))}
                                         </tbody>
                                     </table>
                                 </div>
