@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Play, Code, Upload, Database, Activity, LogOut, ChevronRight, Zap, Target, Sliders, Clock, TrendingUp, BarChart2, FileText, Settings, AlertCircle } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 export default function App() {
     const [user, setUser] = useState(null);
@@ -12,6 +13,9 @@ export default function App() {
     const [code, setCode] = useState('//@version=5\nindicator("My Custom Strategy")\n');
     const [paramMode, setParamMode] = useState('manual'); // 'manual' or 'ai'
     const [iterations, setIterations] = useState(1000);
+
+    const [dbAssets, setDbAssets] = useState({ crypto: [], futures: [] });
+    const [isLoadingAssets, setIsLoadingAssets] = useState(true);
 
     // Custom Param Constraints
     const [params, setParams] = useState([
@@ -28,13 +32,71 @@ export default function App() {
     const [results, setResults] = useState(null);
     const [activeTab, setActiveTab] = useState('summary'); // 'overview' | 'summary' | 'trades'
 
-    const handleGoogleLogin = () => {
-        // Mock Google Login
-        setUser({
-            name: 'Pro Trader',
-            email: 'pro@trading.com',
-            avatar: 'https://ui-avatars.com/api/?name=Pro+Trader&background=2962ff&color=fff'
+    const handleGoogleLogin = async () => {
+        // Integrate with Supabase Google Login
+        const { error } = await supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: {
+                redirectTo: window.location.origin
+            }
         });
+
+        if (error) {
+            console.error('Error logging in:', error.message);
+        }
+    };
+
+    useEffect(() => {
+        // Fetch User
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (session?.user) {
+                setUser({
+                    name: session.user.user_metadata.full_name || 'Trader',
+                    email: session.user.email,
+                    avatar: session.user.user_metadata.avatar_url || 'https://ui-avatars.com/api/?name=Trader&background=2962ff&color=fff'
+                });
+            }
+        });
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            if (session?.user) {
+                setUser({
+                    name: session.user.user_metadata.full_name || 'Trader',
+                    email: session.user.email,
+                    avatar: session.user.user_metadata.avatar_url || 'https://ui-avatars.com/api/?name=Trader&background=2962ff&color=fff'
+                });
+            } else {
+                setUser(null);
+            }
+        });
+
+        // Fetch DB Assets
+        const fetchAssets = async () => {
+            const { data, error } = await supabase
+                .from('assets')
+                .select('*')
+                .eq('active', true);
+
+            if (data && !error) {
+                const crypto = data.filter(a => a.type === 'crypto');
+                const futures = data.filter(a => a.type === 'futures');
+                setDbAssets({ crypto, futures });
+
+                // set default if lists are populated
+                if (assetType === 'crypto' && crypto.length > 0) setAsset(crypto[0].symbol);
+                if (assetType === 'futures' && futures.length > 0) setAsset(futures[0].symbol);
+            }
+            setIsLoadingAssets(false);
+        };
+
+        fetchAssets();
+
+        return () => subscription.unsubscribe();
+    }, []);
+
+    const handleLogout = async () => {
+        await supabase.auth.signOut();
+        setUser(null);
     };
 
     const estimatedMinutes = useMemo(() => {
@@ -175,7 +237,7 @@ export default function App() {
                         <img src={user.avatar} alt="Avatar" style={{ width: 32, height: 32, borderRadius: '50%' }} />
                         <span style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{user.name}</span>
                     </div>
-                    <button className="btn" onClick={() => setUser(null)}>
+                    <button className="btn" onClick={handleLogout}>
                         <LogOut size={16} /> Logout
                     </button>
                 </div>
@@ -207,18 +269,17 @@ export default function App() {
                                 <select className="form-select" value={asset} onChange={e => setAsset(e.target.value)}>
                                     {assetType === 'crypto' ? (
                                         <>
-                                            <option value="BTCUSDT">BTC/USDT (Bitcoin)</option>
-                                            <option value="ETHUSDT">ETH/USDT (Ethereum)</option>
-                                            <option value="SOLUSDT">SOL/USDT (Solana)</option>
-                                            <option value="BNBUSDT">BNB/USDT (Binance)</option>
-                                            <option value="XAUTUSDT">XAUT/USDT (Tether Gold - 加密期貨概念)</option>
+                                            {dbAssets.crypto.map(assetItem => (
+                                                <option key={assetItem.id} value={assetItem.symbol}>{assetItem.symbol} ({assetItem.name})</option>
+                                            ))}
+                                            {dbAssets.crypto.length === 0 && <option value="BTCUSDT">Loading assets...</option>}
                                         </>
                                     ) : (
                                         <>
-                                            <option value="GC!">GC! (Gold Futures / 黃金)</option>
-                                            <option value="ES!">ES! (E-mini S&P 500)</option>
-                                            <option value="NQ!">NQ! (Nasdaq 100)</option>
-                                            <option value="CL!">CL! (Crude Oil)</option>
+                                            {dbAssets.futures.map(assetItem => (
+                                                <option key={assetItem.id} value={assetItem.symbol}>{assetItem.symbol} ({assetItem.name})</option>
+                                            ))}
+                                            {dbAssets.futures.length === 0 && <option value="GC!">Loading assets...</option>}
                                         </>
                                     )}
                                 </select>
