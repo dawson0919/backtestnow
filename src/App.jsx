@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Play, Code, Upload, Database, Activity, LogOut, ChevronRight, Zap, Target, Sliders, Clock, TrendingUp, BarChart2, FileText, Settings, AlertCircle } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { supabase } from './supabaseClient';
 import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/clerk-react";
 
@@ -444,8 +445,36 @@ export default function App() {
                                             </div>
                                         </div>
 
-                                        <div className="chart-placeholder">
-                                            [ Interactive Equity Curve Chart Placeholder ]
+                                        <div className="chart-placeholder" style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <AreaChart
+                                                    data={[
+                                                        { name: 'Start', equity: 1000 },
+                                                        { name: 'Trade 50', equity: 10500 },
+                                                        { name: 'Trade 100', equity: 22000 },
+                                                        { name: 'Trade 150', equity: 18000 },
+                                                        { name: 'Trade 200', equity: 35000 },
+                                                        { name: 'Trade 250', equity: 29000 },
+                                                        { name: 'End', equity: 38450 }
+                                                    ]}
+                                                    margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                                                >
+                                                    <defs>
+                                                        <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
+                                                            <stop offset="5%" stopColor="#2962ff" stopOpacity={0.4} />
+                                                            <stop offset="95%" stopColor="#2962ff" stopOpacity={0} />
+                                                        </linearGradient>
+                                                    </defs>
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                                    <XAxis dataKey="name" stroke="var(--text-secondary)" fontSize={12} tickLine={false} axisLine={false} />
+                                                    <YAxis stroke="var(--text-secondary)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
+                                                    <Tooltip
+                                                        contentStyle={{ backgroundColor: 'var(--bg-panel)', borderColor: 'var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)' }}
+                                                        itemStyle={{ color: 'var(--accent)' }}
+                                                    />
+                                                    <Area type="monotone" dataKey="equity" stroke="#2962ff" strokeWidth={3} fillOpacity={1} fill="url(#colorEquity)" />
+                                                </AreaChart>
+                                            </ResponsiveContainer>
                                         </div>
 
                                         <div style={{ background: 'var(--bg-panel)', padding: '1.5rem', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
