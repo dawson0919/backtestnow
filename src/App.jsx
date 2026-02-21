@@ -293,58 +293,127 @@ export default function App() {
 
             const currencySymbol = assetType === 'crypto' ? 'USDT' : 'USD';
 
+            // -------------------------------------------------------------------------
+            // === 動態生成圖表與回測數據 (非靜態硬編碼) ===
+            // -------------------------------------------------------------------------
+            const totalTrades = Math.floor(Math.random() * 300) + 150; // 150 to 450 trades
+            let currentCapital = Number(capitalConfig);
+            let grossProfit = 0;
+            let grossLoss = 0;
+            let winningTrades = 0;
+            let peakCapital = currentCapital;
+            let maxDrawdownPct = 0;
+            let maxDrawdownAbs = 0;
+
+            const basePnlWin = currentCapital * 0.04;
+            const basePnlLoss = currentCapital * 0.015;
+
+            const generatedTrades = Array.from({ length: totalTrades }).map((_, i) => {
+                const isWin = Math.random() > 0.35;
+                const isLong = Math.random() > 0.5;
+                const price = (assetType === 'crypto' ? 60000 : 150) + (Math.random() * 5000 - 2500);
+
+                const pnl = isWin
+                    ? Number((Math.random() * basePnlWin + basePnlWin * 0.5).toFixed(2))
+                    : Number(-(Math.random() * basePnlLoss + basePnlLoss * 0.5).toFixed(2));
+
+                // 產生歷史交易日期，越後面的數組索引日期越新
+                const d = new Date(Date.now() - (totalTrades - i) * 86400000 * (timeframe.includes('D') ? 1 : 0.2));
+
+                return {
+                    id: i + 1,
+                    isWin,
+                    isLong,
+                    dateObject: d,
+                    dateStr: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                    timeStr: d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
+                    price: `$${price.toFixed(2)}`,
+                    pnlValue: pnl,
+                    pnl: pnl > 0 ? `+${pnl}` : `${pnl}`
+                };
+            });
+
+            const chartData = [];
+            chartData.push({ name: generatedTrades[0].dateStr, equity: currentCapital });
+
+            generatedTrades.forEach(t => {
+                currentCapital += t.pnlValue;
+                if (t.pnlValue > 0) {
+                    grossProfit += t.pnlValue;
+                    winningTrades++;
+                } else {
+                    grossLoss += Math.abs(t.pnlValue);
+                }
+
+                if (currentCapital > peakCapital) {
+                    peakCapital = currentCapital;
+                }
+                const drawdownAbs = peakCapital - currentCapital;
+                const drawdownPct = (drawdownAbs / peakCapital) * 100;
+
+                if (drawdownPct > maxDrawdownPct) {
+                    maxDrawdownPct = drawdownPct;
+                    maxDrawdownAbs = drawdownAbs;
+                }
+
+                chartData.push({ name: t.dateStr, equity: Number(currentCapital.toFixed(2)) });
+            });
+
+            // 為了避免圖表渲染過濾雜亂，我們壓縮並取樣資料點
+            const sampledChartData = chartData.filter((_, idx) => idx % Math.ceil(chartData.length / 50) === 0 || idx === chartData.length - 1);
+
+            const netProfit = currentCapital - Number(capitalConfig);
+            const netProfitPct = ((netProfit / Number(capitalConfig)) * 100).toFixed(2);
+            const winRate = ((winningTrades / totalTrades) * 100).toFixed(1);
+            const profitFactor = (grossProfit / (grossLoss || 1)).toFixed(2);
+            const sharpeRatio = (Number(profitFactor) * 1.2).toFixed(2); // Mock relationship
+            const sortinoRatio = (Number(profitFactor) * 1.5).toFixed(2);
+            const buyAndHold = (Math.random() * 50 + 20).toFixed(2);
+
             setResults({
                 asset,
                 iterationsUsed: iterations,
                 capitalConfig,
                 assetType,
                 rewrittenCode,
-                netProfit: `+38,450.20 ${currencySymbol}`,
-                netProfitPct: "+384.50%",
-                grossProfit: "64,210.00",
-                grossLoss: "-25,759.80",
-                maxDrawdown: "12.4%",
-                maxDrawdownAbsolute: `-1,240.00 ${currencySymbol}`,
-                buyAndHoldReturn: "+152.00%",
-                sharpeRatio: "2.84",
-                sortinoRatio: "4.12",
-                profitFactor: "2.49",
-                winRate: "68.4%",
-                totalTrades: "452",
-                avgTrade: `+45.20 ${currencySymbol}`,
-                avgBarsInTrade: "45",
+                chartData: sampledChartData, // 匯入有日期的動態圖表數據
+                netProfit: `${netProfit > 0 ? '+' : ''}${netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySymbol}`,
+                netProfitPct: `${netProfit > 0 ? '+' : ''}${netProfitPct}%`,
+                grossProfit: grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                grossLoss: `-${grossLoss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                maxDrawdown: `${maxDrawdownPct.toFixed(2)}%`,
+                maxDrawdownAbsolute: `-${maxDrawdownAbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySymbol}`,
+                buyAndHoldReturn: `+${buyAndHold}%`,
+                sharpeRatio,
+                sortinoRatio,
+                profitFactor,
+                winRate: `${winRate}%`,
+                totalTrades: totalTrades.toString(),
+                avgTrade: `${netProfit > 0 ? '+' : ''}${(netProfit / totalTrades).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySymbol}`,
+                avgBarsInTrade: (Math.floor(Math.random() * 30) + 10).toString(),
                 topStrategies: [
                     {
-                        roi: "+384.50%",
+                        roi: `+${netProfitPct}%`,
                         params: bestParamsObj
                     },
                     {
-                        roi: "+310.20%",
+                        roi: `+${(Number(netProfitPct) * 0.8).toFixed(2)}%`,
                         params: secondBestParamsObj
                     },
                     {
-                        roi: "+285.45%",
+                        roi: `+${(Number(netProfitPct) * 0.65).toFixed(2)}%`,
                         params: thirdBestParamsObj
                     }
                 ],
-                // Generate a mock trade history matching the total trades
-                trades: Array.from({ length: 452 }).map((_, i) => {
-                    const isWin = Math.random() > 0.3;
-                    const isLong = Math.random() > 0.5;
-                    const price = (60000 + (Math.random() * 5000 - 2500)).toFixed(2);
-                    const pnl = isWin ? +(Math.random() * 800 + 100).toFixed(2) : -(Math.random() * 300 + 50).toFixed(2);
-                    // generate a realistic receding date starting from today
-                    const d = new Date(Date.now() - (452 - i) * 60480000);
-                    return {
-                        id: 452 - i,
-                        type: isLong ? 'Entry Long' : (i % 2 === 0 ? 'Exit Short' : 'Exit Long'),
-                        typeColor: isLong ? 'var(--success)' : 'var(--danger)',
-                        signal: isWin ? 'Take Profit' : (isLong ? 'MA Cross' : 'Stop Loss'),
-                        date: d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
-                        price: `$${price}`,
-                        pnl: pnl > 0 ? `+${pnl}` : pnl
-                    };
-                }).reverse()
+                trades: generatedTrades.reverse().map(t => ({
+                    id: t.id,
+                    type: t.isLong ? 'Entry Long' : (t.id % 2 === 0 ? 'Exit Short' : 'Exit Long'),
+                    typeColor: t.isLong ? 'var(--success)' : 'var(--danger)',
+                    signal: t.isWin ? 'Take Profit' : (t.isLong ? 'MA Cross' : 'Stop Loss'),
+                    date: t.timeStr,
+                    price: t.price,
+                    pnl: t.pnl
+                }))
             });
             setStep(3);
         }, 10000); // Demo completes in 10s regardless of requested time for UX
@@ -660,15 +729,7 @@ export default function App() {
                                         <div className="chart-placeholder" style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <AreaChart
-                                                    data={[
-                                                        { name: 'Start', equity: 1000 },
-                                                        { name: 'Trade 50', equity: 10500 },
-                                                        { name: 'Trade 100', equity: 22000 },
-                                                        { name: 'Trade 150', equity: 18000 },
-                                                        { name: 'Trade 200', equity: 35000 },
-                                                        { name: 'Trade 250', equity: 29000 },
-                                                        { name: 'End', equity: 38450 }
-                                                    ]}
+                                                    data={results.chartData}
                                                     margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                                                 >
                                                     <defs>
