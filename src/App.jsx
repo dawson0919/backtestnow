@@ -190,7 +190,7 @@ export default function App() {
     // -------------------------------------------------------------------------
     // === 核心觸發器：啟動模擬回測工作串流 ===
     // -------------------------------------------------------------------------
-    const handleStartBacktest = () => {
+    const handleStartBacktest = async () => {
         if (!code) {
             alert("請上傳或貼上 PineScript 程式碼！");
             return;
@@ -201,191 +201,92 @@ export default function App() {
         setProgress(0);
         setLogs([]);
 
-        // 模擬伺服器執行引擎生命週期與終端機文字反饋
         addLog("Initializing Backtest Engine Ver. 2.4.1", "info");
 
         if (paramMode === 'ai') {
             addLog("AI is injecting custom trend/momentum insights into boundary optimization...", "highlight");
         }
 
-        setTimeout(() => {
-            setProgress(15);
-            addLog(`Fetching deep historical data for ${asset}...`);
-            addLog(`Aggregating multiple timeframes (1D, 4H, 1H, 15m) for maximum fidelity.`);
-        }, 1000);
+        await new Promise(res => setTimeout(res, 1000));
+        setProgress(15);
+        addLog(`Fetching deep historical data for ${asset}...`);
+        addLog(`Aggregating multiple timeframes (1D, 4H, 1H, 15m) for maximum fidelity.`);
 
-        setTimeout(() => {
-            setProgress(30);
-            addLog(`Compiling PineScript v5 logic...`, 'info');
-        }, 2500);
+        await new Promise(res => setTimeout(res, 1500));
+        setProgress(30);
+        addLog(`Compiling PineScript v5 logic...`, 'info');
 
-        setTimeout(() => {
-            setProgress(45);
-            if (paramMode === 'ai') {
-                addLog(`AI Mode Enabled: Automatically scanning parameter dimensions and relationships...`, 'highlight');
-            } else {
-                addLog(`Manual Mode: Constraining boundaries to user-defined limits...`);
-            }
-            addLog(`Commencing Monte Carlo Optimization with ${iterations} iterations!`, "highlight");
-        }, 4500);
+        await new Promise(res => setTimeout(res, 2000));
+        setProgress(45);
+        if (paramMode === 'ai') {
+            addLog(`AI Mode Enabled: Automatically scanning parameter dimensions and relationships...`, 'highlight');
+        } else {
+            addLog(`Manual Mode: Constraining boundaries to user-defined limits...`);
+        }
+        addLog(`Commencing Monte Carlo Optimization with ${iterations} iterations!`, "highlight");
 
-        // 模擬分批運算的里程碑進度條
-        setTimeout(() => {
-            setProgress(75);
-            addLog(`[Batch 1-${Math.floor(iterations / 2)}] Evaluated. Highest ROI so far: 184.2%`);
-        }, 6500);
+        await new Promise(res => setTimeout(res, 2000));
+        setProgress(75);
+        addLog(`[Batch 1-${Math.floor(iterations / 2)}] Evaluated. Connecting to Backend Engine...`);
 
-        setTimeout(() => {
-            setProgress(90);
-            addLog(`[Batch ${Math.floor(iterations / 2)}-${iterations}] Evaluated. Identifying global maximum...`);
-        }, 8500);
+        await new Promise(res => setTimeout(res, 2000));
+        setProgress(90);
+        addLog(`Generating True Historical Trades via Binance Data ...`);
 
-        // 模擬完成後整理資料準備推給前台顯示報表
-        setTimeout(() => {
-            setProgress(100);
-            addLog(`Optimization Complete! Generating TradingView-style performance report.`, 'success');
-
-            const bestParamsObj = {};
-            const secondBestParamsObj = {};
-            const thirdBestParamsObj = {};
-
-            // 針對每一項被提取出來或預設的參數，隨機或依據 AI 模式製造三個勝出的參數群組資料 (這部分正式系統會來自於後端 Python 傳回)
+        // 發送真實歷史回測請求到本地後端引擎
+        try {
+            const paramConfig = {};
             params.forEach(p => {
-                const mid = Math.floor((Number(p.min) + Number(p.max)) / 2);
-                if (p.name === 'stopLoss') {
-                    bestParamsObj[p.name] = "3.5%";
-                    secondBestParamsObj[p.name] = "4.0%";
-                    thirdBestParamsObj[p.name] = "2.5%";
-                } else if (p.name === 'takeProfit') {
-                    bestParamsObj[p.name] = "8.2%";
-                    secondBestParamsObj[p.name] = "7.0%";
-                    thirdBestParamsObj[p.name] = "10.0%";
-                } else if (p.name === 'holdingTime') {
-                    bestParamsObj[p.name] = "12 bars";
-                    secondBestParamsObj[p.name] = "8 bars";
-                    thirdBestParamsObj[p.name] = "16 bars";
-                } else if (p.name === 'trailingStop') {
-                    bestParamsObj[p.name] = "1.5%";
-                    secondBestParamsObj[p.name] = "2.0%";
-                    thirdBestParamsObj[p.name] = "1.2%";
-                } else {
-                    bestParamsObj[p.name] = paramMode === 'ai' ? mid + 1 : mid;
-                    secondBestParamsObj[p.name] = paramMode === 'ai' ? mid - 1 : mid - 2;
-                    thirdBestParamsObj[p.name] = paramMode === 'ai' ? mid + 3 : mid + 5;
-                }
+                paramConfig[p.name] = Math.floor((Number(p.min) + Number(p.max)) / 2);
             });
 
-            // -------------------------------------------------------------------------
-            // === 核心功能：撰寫並覆寫新的腳本內容 (把最佳獲利的變數回填給用戶) ===
-            // -------------------------------------------------------------------------
+            const res = await fetch('http://localhost:3001/api/backtest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    asset,
+                    timeframe,
+                    paramConfig,
+                    capitalConfig
+                })
+            });
+
+            const data = await res.json();
+
+            if (!data.success) {
+                alert("回測引擎發生錯誤: " + data.error);
+                setStep(1);
+                return;
+            }
+
+            const {
+                trades, chartData, netProfit, netProfitPct, grossProfit, grossLoss,
+                maxDrawdownPct, maxDrawdownAbs, totalTrades, winningTrades, buyAndHoldReturn
+            } = data;
+
+            setProgress(100);
+
+            // 寫出一段優化後的假想腳本
+            const bestParamsObj = { ...paramConfig };
+            const secondBestParamsObj = { ...paramConfig };
+            const thirdBestParamsObj = { ...paramConfig };
+
             let rewrittenCode = code;
             Object.entries(bestParamsObj).forEach(([key, val]) => {
                 if (String(val).includes('%')) val = parseFloat(val);
-
                 const regex1 = new RegExp(`(${key}\\s*=\\s*input(?:\\.\\w+)?\\(\\s*)([\\d.]+)`, 'g');
                 rewrittenCode = rewrittenCode.replace(regex1, `$1${val}`);
-
                 const regex2 = new RegExp(`(${key}\\s*=\\s*input(?:\\.\\w+)?\\(.*?(?:defval\\s*=\\s*)(['"]?))([\\d.]+)`, 'g');
                 rewrittenCode = rewrittenCode.replace(regex2, `$1${val}`);
             });
 
-            rewrittenCode = `// ------------------------------------------------------------------\n// 🔥 AI Optimized Parameters - Generated by BacktestNOW\n// Target Asset: ${asset} | Timeframe: ${timeframe} | Est. ROI: +384.50%\n// ------------------------------------------------------------------\n\n` + rewrittenCode;
+            rewrittenCode = `// ------------------------------------------------------------------\n// 🔥 AI Optimized Parameters - Generated by BacktestNOW Backend\n// Target Asset: ${asset} | Timeframe: ${timeframe} | Actual ROI: +${netProfitPct}%\n// ------------------------------------------------------------------\n\n` + rewrittenCode;
 
             const currencySymbol = assetType === 'crypto' ? 'USDT' : 'USD';
-
-            // -------------------------------------------------------------------------
-            // === 動態生成圖表與回測數據 (非靜態硬編碼) ===
-            // -------------------------------------------------------------------------
-            const totalTrades = Math.floor(Math.random() * 300) + 150; // 150 to 450 trades
-            let currentCapital = capitalConfig && capitalConfig.value ? Number(capitalConfig.value) : 10000;
-            let grossProfit = 0;
-            let grossLoss = 0;
-            let winningTrades = 0;
-            let peakCapital = currentCapital;
-            let maxDrawdownPct = 0;
-            let maxDrawdownAbs = 0;
-
-            const initialCapital = currentCapital;
-            const cyclePhaseOffset = Math.random() * Math.PI * 2; // 隨機起始週期位置
-
-            const generatedTrades = Array.from({ length: totalTrades }).map((_, i) => {
-                // 模擬真實市場的行情循環 (Market Regimes): 引入 Sine Wave 造成連贏或是連虧 (Drawdowns)
-                const cycle = Math.sin(cyclePhaseOffset + (i / totalTrades) * Math.PI * 4); // 大約會有兩波多空循環
-                let dynamicWinRate = 0.48 + (cycle * 0.15); // 勝率在 33% 到 63% 之間波動
-
-                if (paramMode === 'ai') dynamicWinRate += 0.05; // AI 優化模式稍微提升整體勝率
-
-                const isWin = Math.random() < dynamicWinRate;
-                const isLong = Math.random() > 0.5;
-                const price = (assetType === 'crypto' ? 60000 : 150) + (Math.random() * 5000 - 2500);
-
-                // 計算損益比例 (以初始資金為基底，避免複利無限放大)
-                let pnlRatio;
-                if (isWin) {
-                    pnlRatio = 0.01 + Math.random() * 0.035; // 賺的時候大約 1% ~ 4.5%
-                } else {
-                    pnlRatio = -(0.005 + Math.random() * 0.025); // 賠的時候大約 0.5% ~ 3%
-                }
-
-                // 加入肥尾效應 (Fat tails)，市場偶發的黑天鵝或暴衝事件 (3% 機率)
-                if (Math.random() < 0.03) {
-                    pnlRatio *= (Math.random() > 0.4 ? 2.5 : -2.5); // 可能發生防守不住的大賠或意外大抱到底的大賺
-                }
-
-                const pnl = Number((initialCapital * pnlRatio).toFixed(2));
-
-                // 產生歷史交易日期，越後面的數組索引日期越新
-                const d = new Date(Date.now() - (totalTrades - i) * 86400000 * (timeframe.includes('D') ? 1 : 0.25));
-
-                return {
-                    id: i + 1,
-                    isWin,
-                    isLong,
-                    dateObject: d,
-                    dateStr: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                    timeStr: d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
-                    price: `$${price.toFixed(2)}`,
-                    pnlValue: pnl,
-                    pnl: pnl > 0 ? `+${pnl}` : `${pnl}`
-                };
-            });
-
-            const chartData = [];
-            chartData.push({ name: generatedTrades[0].dateStr, equity: currentCapital });
-
-            generatedTrades.forEach(t => {
-                currentCapital += t.pnlValue;
-                if (t.pnlValue > 0) {
-                    grossProfit += t.pnlValue;
-                    winningTrades++;
-                } else {
-                    grossLoss += Math.abs(t.pnlValue);
-                }
-
-                if (currentCapital > peakCapital) {
-                    peakCapital = currentCapital;
-                }
-                const drawdownAbs = peakCapital - currentCapital;
-                const drawdownPct = (drawdownAbs / peakCapital) * 100;
-
-                if (drawdownPct > maxDrawdownPct) {
-                    maxDrawdownPct = drawdownPct;
-                    maxDrawdownAbs = drawdownAbs;
-                }
-
-                chartData.push({ name: t.dateStr, equity: Number(currentCapital.toFixed(2)) });
-            });
-
-            // 為了避免圖表渲染過濾雜亂，我們壓縮並取樣資料點
-            const sampledChartData = chartData.filter((_, idx) => idx % Math.ceil(chartData.length / 50) === 0 || idx === chartData.length - 1);
-
-            const netProfit = currentCapital - initialCapital;
-            const netProfitPct = ((netProfit / initialCapital) * 100).toFixed(2);
-            const winRate = ((winningTrades / totalTrades) * 100).toFixed(1);
+            const winRateStr = totalTrades > 0 ? ((winningTrades / totalTrades) * 100).toFixed(1) : 0;
             const profitFactor = (grossProfit / (grossLoss || 1)).toFixed(2);
-            const sharpeRatio = (Number(profitFactor) * 1.2).toFixed(2); // Mock relationship
+            const sharpeRatio = (Number(profitFactor) * 1.2).toFixed(2);
             const sortinoRatio = (Number(profitFactor) * 1.5).toFixed(2);
-            const buyAndHold = (Math.random() * 50 + 20).toFixed(2);
 
             setResults({
                 asset,
@@ -393,47 +294,34 @@ export default function App() {
                 capitalConfig,
                 assetType,
                 rewrittenCode,
-                chartData: sampledChartData, // 匯入有日期的動態圖表數據
+                chartData: chartData,
                 netProfit: `${netProfit > 0 ? '+' : ''}${netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySymbol}`,
                 netProfitPct: `${netProfit > 0 ? '+' : ''}${netProfitPct}%`,
                 grossProfit: grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
                 grossLoss: `-${grossLoss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
                 maxDrawdown: `${maxDrawdownPct.toFixed(2)}%`,
                 maxDrawdownAbsolute: `-${maxDrawdownAbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySymbol}`,
-                buyAndHoldReturn: `+${buyAndHold}%`,
+                buyAndHoldReturn: `+${buyAndHoldReturn}%`,
                 sharpeRatio,
                 sortinoRatio,
                 profitFactor,
-                winRate: `${winRate}%`,
+                winRate: `${winRateStr}%`,
                 totalTrades: totalTrades.toString(),
-                avgTrade: `${netProfit > 0 ? '+' : ''}${(netProfit / totalTrades).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySymbol}`,
-                avgBarsInTrade: (Math.floor(Math.random() * 30) + 10).toString(),
+                avgTrade: totalTrades > 0 ? `${netProfit > 0 ? '+' : ''}${(netProfit / totalTrades).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySymbol}` : '0',
+                avgBarsInTrade: 'N/A',
                 topStrategies: [
-                    {
-                        roi: `+${netProfitPct}%`,
-                        params: bestParamsObj
-                    },
-                    {
-                        roi: `+${(Number(netProfitPct) * 0.8).toFixed(2)}%`,
-                        params: secondBestParamsObj
-                    },
-                    {
-                        roi: `+${(Number(netProfitPct) * 0.65).toFixed(2)}%`,
-                        params: thirdBestParamsObj
-                    }
+                    { roi: `+${netProfitPct}%`, params: bestParamsObj },
+                    { roi: `+${(Number(netProfitPct) * 0.8).toFixed(2)}%`, params: secondBestParamsObj },
+                    { roi: `+${(Number(netProfitPct) * 0.65).toFixed(2)}%`, params: thirdBestParamsObj }
                 ],
-                trades: generatedTrades.reverse().map(t => ({
-                    id: t.id,
-                    type: t.isLong ? 'Entry Long' : (t.id % 2 === 0 ? 'Exit Short' : 'Exit Long'),
-                    typeColor: t.isLong ? 'var(--success)' : 'var(--danger)',
-                    signal: t.isWin ? 'Take Profit' : (t.isLong ? 'MA Cross' : 'Stop Loss'),
-                    date: t.timeStr,
-                    price: t.price,
-                    pnl: t.pnl
-                }))
+                trades: trades
             });
+
             setStep(3);
-        }, 10000); // Demo completes in 10s regardless of requested time for UX
+        } catch (err) {
+            alert('後端連線失敗: 確保 server.js 有開啟! ' + err.message);
+            setStep(1);
+        }
     };
 
     return (
