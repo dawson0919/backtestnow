@@ -61,6 +61,93 @@ export default function App() {
         fetchAssets();
     }, []);
 
+    // Extract dynamic parameters from PineScript code
+    useEffect(() => {
+        const defaultRiskParams = [
+            { name: 'stopLoss', min: 1, max: 10, desc: '硬性止損百分比 (Stop Loss %)，確保風控在單筆交易中的最大虧損界限。' },
+            { name: 'takeProfit', min: 2, max: 20, desc: '強制止盈百分比 (Take Profit %)，達到預期報酬即落袋為安。' },
+            { name: 'holdingTime', min: 1, max: 24, desc: '最長持倉根數 (Max Holding Bars)，避免因盤整耗損資金利用率。' },
+            { name: 'trailingStop', min: 0.5, max: 5, desc: '移動停利 (Trailing Stop %)，隨著利潤擴大逐步提高出場線保護利潤。' }
+        ];
+
+        const timer = setTimeout(() => {
+            const lines = code.split('\n');
+            const extractedParams = [];
+
+            lines.forEach(line => {
+                const trimmed = line.trim();
+                // Ignore comments
+                if (trimmed.startsWith('//')) return;
+
+                // Match PineScript input assignments: varName = input(123) or varName = input.int(123, title="...")
+                // Pattern: matches identifier, equals, input, optional dot int/float, parameters
+                const match = trimmed.match(/([a-zA-Z0-9_]+)\s*=\s*input(?:\.(?:int|float))?\(/);
+
+                if (match) {
+                    const varName = match[1];
+                    const titleMatch = trimmed.match(/title\s*=\s*['"]([^'"]+)['"]/);
+                    const desc = titleMatch ? `(自定義參數) ${titleMatch[1]}` : `(自定義腳本參數) ${varName}`;
+
+                    // Try to guess default value to form min/max ranges
+                    let defVal = null;
+                    const firstArgMatch = trimmed.match(/input(?:\.\w+)?\(\s*([\d.]+)/);
+
+                    if (firstArgMatch && !isNaN(parseFloat(firstArgMatch[1]))) {
+                        defVal = parseFloat(firstArgMatch[1]);
+                    } else {
+                        const defvalMatch = trimmed.match(/defval\s*=\s*([\d.]+)/);
+                        if (defvalMatch) defVal = parseFloat(defvalMatch[1]);
+                    }
+
+                    // Generate sensible min/max bounds based on the default value found
+                    let min = 1;
+                    let max = 100;
+                    if (defVal !== null) {
+                        min = defVal > 5 ? Math.floor(defVal * 0.5) : (defVal > 0 ? 0.1 : 0);
+                        max = defVal > 5 ? Math.ceil(defVal * 2) : 10;
+                        if (max <= min) max = min + 10;
+                    }
+
+                    // Look for explicit minval/maxval overrides
+                    const explicitMin = trimmed.match(/minval\s*=\s*([-\d.]+)/);
+                    if (explicitMin) min = parseFloat(explicitMin[1]);
+
+                    const explicitMax = trimmed.match(/maxval\s*=\s*([-\d.]+)/);
+                    if (explicitMax) max = parseFloat(explicitMax[1]);
+
+                    extractedParams.push({
+                        name: varName,
+                        min: min,
+                        max: max,
+                        desc: desc
+                    });
+                }
+            });
+
+            // If nothing extracted, provide defaults
+            if (extractedParams.length === 0) {
+                extractedParams.push(
+                    { name: 'length', min: 10, max: 50, desc: '技術指標的回溯週期，影響趨勢判定與交易訊號的靈敏度。' },
+                    { name: 'multiplier', min: 1.0, max: 4.0, desc: 'ATR 或標準差的乘數，用以動態擴增止損範圍與信道寬度。' }
+                );
+            }
+
+            // Only update if the parameter naming structurally changes to prevent jumping UI inputs
+            setParams(prev => {
+                const updatedList = [...extractedParams, ...defaultRiskParams];
+                const currentNames = prev.map(p => p.name).join(',');
+                const newNames = updatedList.map(p => p.name).join(',');
+                if (currentNames !== newNames) {
+                    return updatedList;
+                }
+                return prev;
+            });
+
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [code]);
+
     const estimatedMinutes = useMemo(() => {
         // mock estimation: 0.1s per backtest group
         // total time in seconds = iterations * 0.1
@@ -91,21 +178,12 @@ export default function App() {
         setProgress(0);
         setLogs([]);
 
-        // MOCK AI CODE ANALYZER
-        // 當使用者按下執行時，模擬 AI 抓取程式碼中的參數，給予新的一組組合 (概念展示)
-        if (code.includes('sma') || code.includes('rsi') || code.includes('macd')) {
-            setParams([
-                { name: 'length', min: 5, max: 100, desc: '偵測到趨勢指標！延長回溯週期搜索空間，以避免短線雜訊干擾。' },
-                { name: 'multiplier', min: 1.5, max: 5.0, desc: '因應震盪放大，AI 建議拉高乘數以防止過早被洗出場。' },
-                { name: 'stopLoss', min: 2, max: 15, desc: '動態防禦機制：放大初始止損，並依賴移動停利保護。' },
-                { name: 'takeProfit', min: 5, max: 30, desc: '波段策略：目標放遠以捕捉完整趨勢波段。' },
-                { name: 'holdingTime', min: 5, max: 48, desc: '給予趨勢發展時間，延長最大允許持倉時間。' },
-                { name: 'trailingStop', min: 1.0, max: 8.0, desc: '趨勢跟隨的核心：以較寬的跟隨距離持續捕捉獲利。' }
-            ]);
-        }
-
         // The demo animation sequence (much faster than indicated time)
         addLog("Initializing Backtest Engine Ver. 2.4.1", "info");
+
+        if (paramMode === 'ai') {
+            addLog("AI is injecting custom trend/momentum insights into boundary optimization...", "highlight");
+        }
 
         setTimeout(() => {
             setProgress(15);
