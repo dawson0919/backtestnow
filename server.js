@@ -83,25 +83,45 @@ app.post('/api/backtest', async (req, res) => {
             if (position) {
                 let exitPrice = null;
                 let signal = '';
+                let pnlRatio = 0;
 
-                const priceDropPct = (position.entryPrice - currentLow) / position.entryPrice * 100;
-                const priceGainPct = (currentHigh - position.entryPrice) / position.entryPrice * 100;
+                if (position.type === 'long') {
+                    const priceDropPct = (position.entryPrice - currentLow) / position.entryPrice * 100;
+                    const priceGainPct = (currentHigh - position.entryPrice) / position.entryPrice * 100;
 
-                if (priceDropPct >= stopLoss) {
-                    exitPrice = position.entryPrice * (1 - (stopLoss / 100)); // Executed at Stop
-                    signal = 'Stop Loss';
-                } else if (priceGainPct >= takeProfit) {
-                    exitPrice = position.entryPrice * (1 + (takeProfit / 100)); // Executed at TP
-                    signal = 'Take Profit';
-                } else if (prevFast >= prevSlow && currentFast < currentSlow) {
-                    exitPrice = currentClose; // Executed on Signal Reverse
-                    signal = 'MA Cross';
+                    if (priceDropPct >= stopLoss) {
+                        exitPrice = position.entryPrice * (1 - (stopLoss / 100)); // Executed at Stop
+                        signal = 'Stop Loss';
+                    } else if (priceGainPct >= takeProfit) {
+                        exitPrice = position.entryPrice * (1 + (takeProfit / 100)); // Executed at TP
+                        signal = 'Take Profit';
+                    } else if (prevFast >= prevSlow && currentFast < currentSlow) {
+                        exitPrice = currentClose; // Executed on Signal Reverse
+                        signal = 'MA Cross';
+                    }
+
+                    if (exitPrice) pnlRatio = (exitPrice - position.entryPrice) / position.entryPrice;
+
+                } else if (position.type === 'short') {
+                    const priceDropPct = (currentHigh - position.entryPrice) / position.entryPrice * 100; // For a short, high price triggers stop loss (price drop relative to direction)
+                    const priceGainPct = (position.entryPrice - currentLow) / position.entryPrice * 100;
+
+                    if (priceDropPct >= stopLoss) {
+                        exitPrice = position.entryPrice * (1 + (stopLoss / 100)); // Executed at Stop
+                        signal = 'Stop Loss';
+                    } else if (priceGainPct >= takeProfit) {
+                        exitPrice = position.entryPrice * (1 - (takeProfit / 100)); // Executed at TP
+                        signal = 'Take Profit';
+                    } else if (prevFast <= prevSlow && currentFast > currentSlow) {
+                        exitPrice = currentClose; // Executed on Signal Reverse
+                        signal = 'MA Cross';
+                    }
+
+                    if (exitPrice) pnlRatio = (position.entryPrice - exitPrice) / position.entryPrice;
                 }
 
                 if (exitPrice) {
-                    const pnlRatio = (exitPrice - position.entryPrice) / position.entryPrice;
                     const pnlVal = capital * pnlRatio;
-
                     capital += pnlVal;
 
                     if (pnlVal > 0) {
@@ -114,7 +134,7 @@ app.post('/api/backtest', async (req, res) => {
                     trades.push({
                         id: trades.length + 1,
                         isWin: pnlVal > 0,
-                        isLong: true,
+                        isLong: position.type === 'long',
                         dateObject: currentDate,
                         dateStr: currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
                         timeStr: currentDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
@@ -122,7 +142,7 @@ app.post('/api/backtest', async (req, res) => {
                         pnlValue: pnlVal,
                         pnl: pnlVal > 0 ? `+${pnlVal.toFixed(2)}` : `${pnlVal.toFixed(2)}`,
                         signal: signal,
-                        type: 'Exit Long',
+                        type: position.type === 'long' ? 'Exit Long' : 'Exit Short',
                         typeColor: pnlVal > 0 ? 'var(--success)' : 'var(--danger)'
                     });
 
@@ -152,6 +172,27 @@ app.post('/api/backtest', async (req, res) => {
                         signal: 'MA Cross',
                         type: 'Entry Long',
                         typeColor: 'var(--success)'
+                    });
+                } else if (prevFast >= prevSlow && currentFast < currentSlow) {
+                    position = {
+                        type: 'short',
+                        entryPrice: currentClose,
+                        entryTime: currentDate,
+                    };
+
+                    trades.push({
+                        id: trades.length + 1,
+                        isWin: false,
+                        isLong: false,
+                        dateObject: currentDate,
+                        dateStr: currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                        timeStr: currentDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
+                        price: `$${currentClose.toFixed(2)}`,
+                        pnlValue: 0,
+                        pnl: '-',
+                        signal: 'MA Cross',
+                        type: 'Entry Short',
+                        typeColor: 'var(--danger)'
                     });
                 }
             }
