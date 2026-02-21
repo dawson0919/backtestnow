@@ -297,7 +297,7 @@ export default function App() {
             // === 動態生成圖表與回測數據 (非靜態硬編碼) ===
             // -------------------------------------------------------------------------
             const totalTrades = Math.floor(Math.random() * 300) + 150; // 150 to 450 trades
-            let currentCapital = Number(capitalConfig);
+            let currentCapital = capitalConfig && capitalConfig.value ? Number(capitalConfig.value) : 10000;
             let grossProfit = 0;
             let grossLoss = 0;
             let winningTrades = 0;
@@ -362,8 +362,9 @@ export default function App() {
             // 為了避免圖表渲染過濾雜亂，我們壓縮並取樣資料點
             const sampledChartData = chartData.filter((_, idx) => idx % Math.ceil(chartData.length / 50) === 0 || idx === chartData.length - 1);
 
-            const netProfit = currentCapital - Number(capitalConfig);
-            const netProfitPct = ((netProfit / Number(capitalConfig)) * 100).toFixed(2);
+            const initialCapital = capitalConfig && capitalConfig.value ? Number(capitalConfig.value) : 10000;
+            const netProfit = currentCapital - initialCapital;
+            const netProfitPct = ((netProfit / initialCapital) * 100).toFixed(2);
             const winRate = ((winningTrades / totalTrades) * 100).toFixed(1);
             const profitFactor = (grossProfit / (grossLoss || 1)).toFixed(2);
             const sharpeRatio = (Number(profitFactor) * 1.2).toFixed(2); // Mock relationship
