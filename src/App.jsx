@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Play, Code, Upload, Database, Activity, LogOut, ChevronRight, Zap, Target, Sliders, Clock, TrendingUp, BarChart2, FileText, Settings, AlertCircle, ArrowRight, CheckCircle2, Shield, Sparkles, History, Trash2 } from 'lucide-react';
+import { Play, Code, Upload, Database, Activity, LogOut, ChevronRight, Zap, Target, Sliders, Clock, TrendingUp, BarChart2, FileText, Settings, AlertCircle, ArrowRight, CheckCircle2, Shield, Sparkles, History, Trash2, Download } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Label } from 'recharts';
 import { supabase } from './supabaseClient';
 import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/clerk-react";
@@ -133,7 +133,7 @@ export default function App() {
     };
 
     const fetchHistory = async () => {
-        if (!user) return;
+        if (!user || !supabase) return;
         setIsLoadingHistory(true);
         const { data, error } = await supabase
             .from('optimization_history')
@@ -149,7 +149,7 @@ export default function App() {
     };
 
     const saveToHistory = async (resultsData) => {
-        if (!user) return;
+        if (!user || !supabase) return;
 
         // 1. Check current count
         const { count } = await supabase
@@ -186,6 +186,7 @@ export default function App() {
 
     const deleteHistoryItem = async (e, id) => {
         e.stopPropagation();
+        if (!supabase) return;
         await supabase.from('optimization_history').delete().eq('id', id);
         fetchHistory();
     };
@@ -199,44 +200,62 @@ export default function App() {
     };
 
 
-    // Fetch user role & usage on login — depend on user.id only to avoid infinite loop
+    // --- Fetch User Status (Membership) ---
     useEffect(() => {
-        if (!user?.id) return;
-        const fetchStatus = async () => {
-            try {
-                const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
-                const params = new URLSearchParams({ userId: user.id, email: user.primaryEmailAddress?.emailAddress || '' });
-                const res = await fetch(`${apiBase}/api/user/status?${params}`);
-                const data = await res.json();
-                setUserRole(data.role);
-                setUsageCount(data.usageCount);
-            } catch (_) {}
-        };
-        fetchStatus();
-    }, [user?.id]);
-
-    // Admin: fetch applications
-    const fetchAdminApplications = async () => {
         if (!user) return;
+        fetchStatus();
+    }, [user]);
+
+    const fetchStatus = async () => {
+        try {
+            const resp = await fetch(`/api/user/status?userId=${user.id}&email=${user.primaryEmailAddress?.emailAddress || ''}`);
+            const data = await resp.json();
+            if (data) {
+                setUserRole(data.role || 'basic');
+                setUsageCount(data.usageCount || 0);
+            }
+        } catch (e) {
+            console.error("Status check failed", e);
+        }
+    };
+
+    // --- Fetch Admin Applications ---
+    useEffect(() => {
+        if (userRole === 'admin' && step === 5) {
+            fetchAdminApplications();
+        }
+    }, [userRole, step]);
+
+    const fetchAdminApplications = async () => {
+        if (!supabase) return;
         setIsLoadingAdmin(true);
-        const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
-        const email = user.primaryEmailAddress?.emailAddress || '';
-        const res = await fetch(`${apiBase}/api/admin/applications?email=${encodeURIComponent(email)}`);
-        const data = await res.json();
-        if (data.success) setAdminApplications(data.applications);
-        setIsLoadingAdmin(false);
+        try {
+            const { data } = await supabase.from('vip_applications').select('*').order('created_at', { ascending: false });
+            setAdminApplications(data || []);
+        } catch (e) {
+            console.error("Admin fetch failed", e);
+        } finally {
+            setIsLoadingAdmin(false);
+        }
     };
 
     const handleAdminReview = async (applicationId, action) => {
-        const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
-        const email = user.primaryEmailAddress?.emailAddress || '';
-        await fetch(`${apiBase}/api/admin/review`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, applicationId, action })
-        });
-        fetchAdminApplications();
+        try {
+            const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
+            const email = user.primaryEmailAddress?.emailAddress || '';
+            const res = await fetch(`${apiBase}/api/admin/review`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, applicationId, action })
+            });
+            const data = await res.json();
+            if (data.success) fetchAdminApplications();
+            else alert(data.error || '審核提交失敗');
+        } catch (e) {
+            alert('系統錯誤');
+        }
     };
+
 
     // VIP Application: upload screenshot then submit
     const handleApplyVip = async () => {
@@ -244,6 +263,7 @@ export default function App() {
         setApplyStatus('uploading');
         setApplyMessage('正在上傳截圖...');
         try {
+            if (!supabase) throw new Error('Supabase configuration is missing');
             const file = applyScreenshot;
             const ext = file.name.split('.').pop();
             const path = `${user.id}_${Date.now()}.${ext}`;
@@ -253,6 +273,7 @@ export default function App() {
 
             if (uploadError) throw new Error(uploadError.message);
 
+            if (!supabase) throw new Error('Supabase client missing');
             const { data: urlData } = supabase.storage.from('vip-screenshots').getPublicUrl(path);
             const screenshotUrl = urlData.publicUrl;
 
@@ -280,19 +301,28 @@ export default function App() {
     useEffect(() => {
         // Fetch DB Assets
         const fetchAssets = async () => {
-            const { data, error } = await supabase
-                .from('assets')
-                .select('*')
-                .eq('active', true);
+            if (!supabase) {
+                console.warn("Supabase not initialized, using default assets.");
+                setIsLoadingAssets(false);
+                return;
+            }
+            try {
+                const { data, error } = await supabase
+                    .from('assets')
+                    .select('*')
+                    .eq('active', true);
 
-            if (data && !error) {
-                const crypto = data.filter(a => a.type === 'crypto');
-                const futures = data.filter(a => a.type === 'futures');
-                setDbAssets({ crypto, futures });
+                if (data && !error) {
+                    const crypto = data.filter(a => a.type === 'crypto');
+                    const futures = data.filter(a => a.type === 'futures');
+                    setDbAssets({ crypto, futures });
 
-                // set default if lists are populated
-                if (assetType === 'crypto' && crypto.length > 0) setAsset(crypto[0].symbol);
-                if (assetType === 'futures' && futures.length > 0) setAsset(futures[0].symbol);
+                    // set default if lists are populated
+                    if (assetType === 'crypto' && crypto.length > 0) setAsset(crypto[0].symbol);
+                    if (assetType === 'futures' && futures.length > 0) setAsset(futures[0].symbol);
+                }
+            } catch (e) {
+                console.error("Failed to fetch assets", e);
             }
             setIsLoadingAssets(false);
         };
@@ -534,7 +564,7 @@ export default function App() {
                 const optimizedParams = bestParams || paramConfig;
                 const notInjected = {};
 
-                // For each optimized parameter, find its input() declaration and replace the default value
+                // Replace existing input() declarations with optimized values
                 Object.entries(optimizedParams).forEach(([varName, optimizedValue]) => {
                     const lineRegex = new RegExp(
                         `^(\\s*${varName}\\s*=\\s*input(?:\\.(?:int|float|bool))?)\\(([^,)]+)`,
@@ -543,14 +573,13 @@ export default function App() {
                     const newCode = optimizedCode.replace(lineRegex, (match, prefix, _oldVal) => {
                         return `${prefix}(${optimizedValue}`;
                     });
-                    // Track params that had no matching input() line
                     if (newCode === optimizedCode) {
                         notInjected[varName] = optimizedValue;
                     }
                     optimizedCode = newCode;
                 });
 
-                // Build header with OPTIMIZED values (not original midpoints)
+                // Build header with OPTIMIZED values
                 const header = [
                     `//@version=5`,
                     `// ═══════════════════════════════════════════════════════════`,
@@ -562,16 +591,74 @@ export default function App() {
                     ``
                 ].join('\n');
 
-                // Append params not found in script as input() declarations at the bottom
-                const extras = Object.keys(notInjected).length > 0
-                    ? '\n// ── AI 注入的額外風控參數 ──\n' +
-                      Object.entries(notInjected).map(([k, v]) =>
-                          `${k} = input.float(${v}, title="${k} (AI 優化)", step=0.5)`
-                      ).join('\n') + '\n'
-                    : '';
-
                 const codeWithoutVersion = optimizedCode.replace(/^\/\/@version=\d+\s*/m, '');
-                return header + codeWithoutVersion + extras;
+
+                // If risk params have no matching input() lines, inject them AFTER strategy() call
+                if (Object.keys(notInjected).length > 0) {
+                    const sl = notInjected.stopLoss ?? 2;
+                    const tp = notInjected.takeProfit ?? 5;
+                    const ts = notInjected.trailingStop ?? 1;
+                    const ht = notInjected.holdingTime ?? 8;
+
+                    const inputDecls = Object.entries(notInjected).map(([k, v]) => {
+                        const isInt = Number.isInteger(Number(v));
+                        const fn = isInt ? 'input.int' : 'input.float';
+                        const step = isInt ? 1 : 0.5;
+                        return `${k} = ${fn}(${v}, title="${k} (AI 優化)", step=${step})`;
+                    }).join('\n');
+
+                    const exitBlock = [
+                        ``,
+                        `// ── AI 注入的風控退場邏輯 ──`,
+                        `// 以下程式碼使用上方 AI 優化後的風控參數，自動設定停損/停利/移動停利/最長持倉`,
+                        `if strategy.position_size > 0`,
+                        `    strategy.exit("AI_Exit_Long",`,
+                        `        from_entry = "Long",`,
+                        `        stop   = strategy.position_avg_price * (1 - ${sl}/100),`,
+                        `        limit  = strategy.position_avg_price * (1 + ${tp}/100),`,
+                        `        trail_offset = strategy.position_avg_price * ${ts}/100 / syminfo.mintick)`,
+                        `if strategy.position_size < 0`,
+                        `    strategy.exit("AI_Exit_Short",`,
+                        `        from_entry = "Short",`,
+                        `        stop   = strategy.position_avg_price * (1 + ${sl}/100),`,
+                        `        limit  = strategy.position_avg_price * (1 - ${tp}/100),`,
+                        `        trail_offset = strategy.position_avg_price * ${ts}/100 / syminfo.mintick)`,
+                        `// 最長持倉 ${ht} 根K棒強制出場`,
+                        `if strategy.position_size != 0 and bar_index - strategy.opentrades.entry_bar_index(0) >= ${ht}`,
+                        `    strategy.close_all("AI_MaxHold")`,
+                    ].join('\n');
+
+                    // Insert input declarations right after strategy() / indicator() call
+                    const lines = codeWithoutVersion.split('\n');
+                    let insertIdx = 0;
+                    let depth = 0;
+                    let foundCall = false;
+                    for (let i = 0; i < lines.length; i++) {
+                        const t = lines[i].trim();
+                        if (!foundCall && (t.startsWith('strategy(') || t.startsWith('indicator('))) {
+                            foundCall = true;
+                        }
+                        if (foundCall) {
+                            for (const ch of lines[i]) {
+                                if (ch === '(') depth++;
+                                else if (ch === ')') depth--;
+                            }
+                            if (depth <= 0) { insertIdx = i + 1; break; }
+                        }
+                    }
+
+                    const injected = [
+                        ...lines.slice(0, insertIdx),
+                        ``,
+                        `// ── AI 注入的風控輸入參數 ──`,
+                        inputDecls,
+                        ...lines.slice(insertIdx),
+                    ].join('\n');
+
+                    return header + injected + exitBlock;
+                }
+
+                return header + codeWithoutVersion;
             })();
             const currencySymbol = assetType === 'crypto' ? 'USDT' : 'USD';
             const defaultCapital = assetType === 'crypto' ? 10000 : 50000;

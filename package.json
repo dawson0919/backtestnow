@@ -1,7 +1,8 @@
 {
     "name": "backtestnow",
     "private": true,
-    "version": "0.0.0",
+    "version": "1.0.1",
+    "description": "Backtest Engine with Safe DB Initialization",
     "type": "module",
     "engines": {
         "node": ">=22.0.0"

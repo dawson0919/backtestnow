@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git push:*)",
+      "Bash(xxd:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)",
+      "Bash(npm run build:*)",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "mcp__claude_ai_Supabase__get_logs"
+    ]
+  }
+}

@@ -1,0 +1,84 @@
+﻿[dotenv@17.3.1] injecting env (3) from .env.local -- tip: ??儭? run anywhere with `dotenvx run -- yourcommand`
+Updating BTCUSDT (BTCUSDT) 1H via Binance... [Binance] Fetching BTCUSDT 1h...
+[Binance] Got 1000 quotes. Latest: 2026-02-22T10:00:00.000Z
+[Filter] 1000 total -> 1000 valid rows
+[Debug] Last VALID quote date: 2026-02-22T10:00:00.000Z
+OK (1000 rows inserted/updated)
+Updating BTCUSDT (BTCUSDT) D via Binance... [Binance] Fetching BTCUSDT d...
+FAILED: Request failed with status code 400
+Updating ETHUSDT (ETHUSDT) 1H via Binance... [Binance] Fetching ETHUSDT 1h...
+[Binance] Got 1000 quotes. Latest: 2026-02-22T10:00:00.000Z
+[Filter] 1000 total -> 1000 valid rows
+[Debug] Last VALID quote date: 2026-02-22T10:00:00.000Z
+OK (1000 rows inserted/updated)
+Updating ETHUSDT (ETHUSDT) D via Binance... [Binance] Fetching ETHUSDT d...
+FAILED: Request failed with status code 400
+Updating SOLUSDT (SOLUSDT) 1H via Binance... [Binance] Fetching SOLUSDT 1h...
+[Binance] Got 1000 quotes. Latest: 2026-02-22T10:00:00.000Z
+[Filter] 1000 total -> 1000 valid rows
+[Debug] Last VALID quote date: 2026-02-22T10:00:00.000Z
+OK (1000 rows inserted/updated)
+Updating SOLUSDT (SOLUSDT) D via Binance... [Binance] Fetching SOLUSDT d...
+FAILED: Request failed with status code 400
+Updating BNBUSDT (BNBUSDT) 1H via Binance... [Binance] Fetching BNBUSDT 1h...
+[Binance] Got 1000 quotes. Latest: 2026-02-22T10:00:00.000Z
+[Filter] 1000 total -> 1000 valid rows
+[Debug] Last VALID quote date: 2026-02-22T10:00:00.000Z
+OK (1000 rows inserted/updated)
+Updating BNBUSDT (BNBUSDT) D via Binance... [Binance] Fetching BNBUSDT d...
+FAILED: Request failed with status code 400
+Updating XAUTUSDT (XAUTUSDT) 1H via Binance... [Binance] Fetching XAUTUSDT 1h...
+FAILED: Request failed with status code 400
+Updating XAUTUSDT (XAUTUSDT) D via Binance... [Binance] Fetching XAUTUSDT d...
+FAILED: Request failed with status code 400
+Updating GC! (GC=F) 1H via Yahoo... [Yahoo] Fetching GC=F...
+[Yahoo] Got 7264 quotes. Latest: 2026-02-20T21:59:59.000Z
+[Filter] 7264 total -> 5731 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:59.000Z
+OK (7264 rows inserted/updated)
+Updating GC! (GC=F) D via Yahoo... [Yahoo] Fetching GC=F...
+[Yahoo] Got 1260 quotes. Latest: 2026-02-20T21:59:59.000Z
+[Filter] 1260 total -> 1257 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:59.000Z
+OK (1260 rows inserted/updated)
+Updating ES! (ES=F) 1H via Yahoo... [Yahoo] Fetching ES=F...
+[Yahoo] Got 7260 quotes. Latest: 2026-02-20T21:59:59.000Z
+[Filter] 7260 total -> 5710 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:59.000Z
+OK (7260 rows inserted/updated)
+Updating ES! (ES=F) D via Yahoo... [Yahoo] Fetching ES=F...
+[Yahoo] Got 1260 quotes. Latest: 2026-02-20T21:59:59.000Z
+[Filter] 1260 total -> 1258 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:59.000Z
+OK (1260 rows inserted/updated)
+Updating NQ! (NQ=F) 1H via Yahoo... [Yahoo] Fetching NQ=F...
+[Yahoo] Got 7260 quotes. Latest: 2026-02-20T21:59:59.000Z
+[Filter] 7260 total -> 5712 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:59.000Z
+OK (7260 rows inserted/updated)
+Updating NQ! (NQ=F) D via Yahoo... [Yahoo] Fetching NQ=F...
+[Yahoo] Got 1260 quotes. Latest: 2026-02-20T21:59:59.000Z
+[Filter] 1260 total -> 1258 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:59.000Z
+OK (1260 rows inserted/updated)
+Updating YM! (YM=F) 1H via Yahoo... [Yahoo] Fetching YM=F...
+[Yahoo] Got 7260 quotes. Latest: 2026-02-20T21:59:58.000Z
+[Filter] 7260 total -> 5708 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:58.000Z
+OK (7260 rows inserted/updated)
+Updating YM! (YM=F) D via Yahoo... [Yahoo] Fetching YM=F...
+[Yahoo] Got 1260 quotes. Latest: 2026-02-20T21:59:58.000Z
+[Filter] 1260 total -> 1258 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:58.000Z
+OK (1260 rows inserted/updated)
+Updating SIL! (SI=F) 1H via Yahoo... [Yahoo] Fetching SI=F...
+[Yahoo] Got 7264 quotes. Latest: 2026-02-20T21:59:49.000Z
+[Filter] 7264 total -> 5728 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:49.000Z
+OK (7264 rows inserted/updated)
+Updating SIL! (SI=F) D via Yahoo... [Yahoo] Fetching SI=F...
+[Yahoo] Got 1260 quotes. Latest: 2026-02-20T21:59:49.000Z
+[Filter] 1260 total -> 1257 valid rows
+[Debug] Last VALID quote date: 2026-02-20T21:59:49.000Z
+OK (1260 rows inserted/updated)
+All updates complete.
