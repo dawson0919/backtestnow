@@ -17,6 +17,9 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
+// Health check
+app.get('/health', (req, res) => res.send('OK'));
+
 function mapInterval(timeframe) {
     const map = {
         '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
@@ -616,4 +619,8 @@ if (existsSync(join(__dirname, 'dist'))) {
     });
 }
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Backend Engine running on 0.0.0.0:${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Backend Engine successfully started!`);
+    console.log(`- Port: ${PORT}`);
+    console.log(`- Mode: ${process.env.NODE_ENV || 'development'}`);
+});
