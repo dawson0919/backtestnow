@@ -42,7 +42,7 @@ async function getUserRole(userId, email) {
         .from('user_roles')
         .select('role')
         .eq('user_id', userId)
-        .single();
+        .maybeSingle();
 
     if (data) return data.role;
 
@@ -60,7 +60,7 @@ async function getMonthlyUsage(userId) {
         .select('count')
         .eq('user_id', userId)
         .eq('month', month)
-        .single();
+        .maybeSingle();
     return data ? data.count : 0;
 }
 

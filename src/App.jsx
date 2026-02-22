@@ -199,19 +199,21 @@ export default function App() {
     };
 
 
-    // Fetch user role & usage on login
+    // Fetch user role & usage on login — depend on user.id only to avoid infinite loop
     useEffect(() => {
-        if (!user) return;
+        if (!user?.id) return;
         const fetchStatus = async () => {
-            const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
-            const params = new URLSearchParams({ userId: user.id, email: user.primaryEmailAddress?.emailAddress || '' });
-            const res = await fetch(`${apiBase}/api/user/status?${params}`);
-            const data = await res.json();
-            setUserRole(data.role);
-            setUsageCount(data.usageCount);
+            try {
+                const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
+                const params = new URLSearchParams({ userId: user.id, email: user.primaryEmailAddress?.emailAddress || '' });
+                const res = await fetch(`${apiBase}/api/user/status?${params}`);
+                const data = await res.json();
+                setUserRole(data.role);
+                setUsageCount(data.usageCount);
+            } catch (_) {}
         };
         fetchStatus();
-    }, [user]);
+    }, [user?.id]);
 
     // Admin: fetch applications
     const fetchAdminApplications = async () => {
