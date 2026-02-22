@@ -67,6 +67,11 @@ alertcondition(short_condition, title="三刀流空頭進場", message="黃金 1
 const ADMIN_EMAIL = 'nbamoment@gmail.com';
 const BASIC_LIMIT = 30;
 
+// In production: use VITE_API_URL (Railway backend URL).
+// Falls back to same-host (for Railway all-in-one) or localhost for dev.
+const API_BASE = import.meta.env.VITE_API_URL
+    || (import.meta.env.PROD ? '' : 'http://localhost:3001');
+
 export default function App() {
     const { user } = useUser();
     const [step, setStep] = useState(0); // 0: Landing, 1: Input, 2: Processing, 3: Results, 4: History, 5: Admin
@@ -208,7 +213,7 @@ export default function App() {
 
     const fetchStatus = async () => {
         try {
-            const resp = await fetch(`/api/user/status?userId=${user.id}&email=${user.primaryEmailAddress?.emailAddress || ''}`);
+            const resp = await fetch(`${API_BASE}/api/user/status?userId=${user.id}&email=${user.primaryEmailAddress?.emailAddress || ''}`);
             const data = await resp.json();
             if (data) {
                 setUserRole(data.role || 'basic');
@@ -241,7 +246,7 @@ export default function App() {
 
     const handleAdminReview = async (applicationId, action) => {
         try {
-            const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
+            const apiBase = API_BASE;
             const email = user.primaryEmailAddress?.emailAddress || '';
             const res = await fetch(`${apiBase}/api/admin/review`, {
                 method: 'POST',
@@ -277,7 +282,7 @@ export default function App() {
             const { data: urlData } = supabase.storage.from('vip-screenshots').getPublicUrl(path);
             const screenshotUrl = urlData.publicUrl;
 
-            const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
+            const apiBase = API_BASE;
             const res = await fetch(`${apiBase}/api/user/apply-vip`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -519,7 +524,7 @@ export default function App() {
                 paramConfig[p.name] = Math.floor((Number(p.min) + Number(p.max)) / 2);
             });
 
-            const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
+            const apiBase = API_BASE;
             const res = await fetch(`${apiBase}/api/backtest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
