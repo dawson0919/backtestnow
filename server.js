@@ -15,6 +15,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Log every incoming request
+app.use((req, res, next) => {
+    console.log(`[==> REQ] ${req.method} ${req.originalUrl}`);
+    next();
+});
+
 // Global Error Handlers for process
 process.on('uncaughtException', (err) => {
     console.error('[CRITICAL] Uncaught Exception:', err);
@@ -627,8 +633,8 @@ if (existsSync(join(__dirname, 'dist'))) {
     });
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend Engine successfully started!`);
-    console.log(`- Port: ${PORT} (Auto-bound)`);
+    console.log(`- Port: ${PORT} (Bound to 0.0.0.0)`);
     console.log(`- Mode: ${process.env.NODE_ENV || 'development'}`);
 });
