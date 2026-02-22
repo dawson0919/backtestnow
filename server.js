@@ -651,8 +651,9 @@ if (existsSync(join(__dirname, 'dist'))) {
     });
 }
 
-app.listen(PORT, '0.0.0.0', () => {
+const listenPort = Number(process.env.PORT) || 3001;
+app.listen(listenPort, '::', () => {
     console.log(`Backend Engine successfully started!`);
-    console.log(`- Port: ${PORT} (Bound to 0.0.0.0)`);
+    console.log(`- Port: ${listenPort} (Bound to ::)`);
     console.log(`- Mode: ${process.env.NODE_ENV || 'development'}`);
 });
