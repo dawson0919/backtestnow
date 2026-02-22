@@ -15,6 +15,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Global Error Handlers for process
+process.on('uncaughtException', (err) => {
+    console.error('[CRITICAL] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 const PORT = process.env.PORT || 3001;
 
 // Health check
@@ -619,8 +627,8 @@ if (existsSync(join(__dirname, 'dist'))) {
     });
 }
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
     console.log(`Backend Engine successfully started!`);
-    console.log(`- Port: ${PORT}`);
+    console.log(`- Port: ${PORT} (Auto-bound)`);
     console.log(`- Mode: ${process.env.NODE_ENV || 'development'}`);
 });
