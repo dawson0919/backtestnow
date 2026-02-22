@@ -38,7 +38,6 @@ app.post('/api/backtest', async (req, res) => {
         const { asset, timeframe, paramConfig, capitalConfig } = req.body;
 
         // Traditional finance → Yahoo Finance; Crypto → Binance (default)
-        const binanceMap = {}; // pure crypto pairs (e.g. BTCUSDT) need no mapping
         const yahooMap = {
             // Index Futures
             'NQ!': 'NQ=F',      // Nasdaq 100
@@ -480,7 +479,7 @@ app.post('/api/backtest', async (req, res) => {
 // Serve built Vite frontend (production)
 if (existsSync(join(__dirname, 'dist'))) {
     app.use(express.static(join(__dirname, 'dist')));
-    app.get('*', (req, res) => {
+    app.get('/{*path}', (req, res) => {
         if (!req.path.startsWith('/api')) {
             res.sendFile(join(__dirname, 'dist', 'index.html'));
         }
