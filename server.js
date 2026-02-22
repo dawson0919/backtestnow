@@ -33,9 +33,166 @@ function mapInterval(timeframe) {
     return map[timeframe] || '1h';
 }
 
+const ADMIN_EMAIL = 'nbamoment@gmail.com';
+const BASIC_MONTHLY_LIMIT = 30;
+
+// Helper: get or create user role
+async function getUserRole(userId, email) {
+    const { data } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', userId)
+        .single();
+
+    if (data) return data.role;
+
+    // First login — check if this is the admin email
+    const role = email === ADMIN_EMAIL ? 'admin' : 'basic';
+    await supabase.from('user_roles').upsert({ user_id: userId, email, role });
+    return role;
+}
+
+// Helper: get this month's usage count
+async function getMonthlyUsage(userId) {
+    const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const { data } = await supabase
+        .from('usage_tracking')
+        .select('count')
+        .eq('user_id', userId)
+        .eq('month', month)
+        .single();
+    return data ? data.count : 0;
+}
+
+// Helper: increment monthly usage
+async function incrementUsage(userId) {
+    const month = new Date().toISOString().slice(0, 7);
+    const { data } = await supabase
+        .from('usage_tracking')
+        .select('id, count')
+        .eq('user_id', userId)
+        .eq('month', month)
+        .single();
+
+    if (data) {
+        await supabase.from('usage_tracking').update({ count: data.count + 1 }).eq('id', data.id);
+    } else {
+        await supabase.from('usage_tracking').insert({ user_id: userId, month, count: 1 });
+    }
+}
+
+// GET /api/user/status — role + monthly usage
+app.get('/api/user/status', async (req, res) => {
+    try {
+        const { userId, email } = req.query;
+        if (!userId) return res.json({ role: 'basic', usageCount: 0, limit: BASIC_MONTHLY_LIMIT });
+
+        const role = await getUserRole(userId, email || '');
+        const usageCount = await getMonthlyUsage(userId);
+        res.json({ role, usageCount, limit: BASIC_MONTHLY_LIMIT });
+    } catch (e) {
+        res.json({ role: 'basic', usageCount: 0, limit: BASIC_MONTHLY_LIMIT });
+    }
+});
+
+// POST /api/user/apply-vip — submit VIP application
+app.post('/api/user/apply-vip', async (req, res) => {
+    try {
+        const { userId, email, userName, screenshotUrl } = req.body;
+        if (!userId || !screenshotUrl) return res.status(400).json({ success: false, error: '缺少必要欄位' });
+
+        // Check if already applied (pending or approved)
+        const { data: existing } = await supabase
+            .from('vip_applications')
+            .select('status')
+            .eq('user_id', userId)
+            .in('status', ['pending', 'approved'])
+            .single();
+
+        if (existing) {
+            return res.json({ success: false, error: existing.status === 'approved' ? '您已是 VIP 會員' : '申請審核中，請耐心等候' });
+        }
+
+        await supabase.from('vip_applications').insert({
+            user_id: userId, user_email: email, user_name: userName, screenshot_url: screenshotUrl
+        });
+
+        res.json({ success: true, message: '申請已送出，管理員審核後將為您解鎖 VIP 功能' });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// GET /api/admin/applications — list all applications (admin only)
+app.get('/api/admin/applications', async (req, res) => {
+    try {
+        const { email } = req.query;
+        if (email !== ADMIN_EMAIL) return res.status(403).json({ success: false, error: '無權限' });
+
+        const { data } = await supabase
+            .from('vip_applications')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        res.json({ success: true, applications: data || [] });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// POST /api/admin/review — approve or reject application
+app.post('/api/admin/review', async (req, res) => {
+    try {
+        const { email, applicationId, action, adminNote } = req.body;
+        if (email !== ADMIN_EMAIL) return res.status(403).json({ success: false, error: '無權限' });
+        if (!['approved', 'rejected'].includes(action)) return res.status(400).json({ success: false, error: '無效操作' });
+
+        // Get application
+        const { data: app } = await supabase
+            .from('vip_applications')
+            .select('user_id, user_email')
+            .eq('id', applicationId)
+            .single();
+
+        if (!app) return res.status(404).json({ success: false, error: '申請不存在' });
+
+        // Update application status
+        await supabase.from('vip_applications').update({
+            status: action,
+            admin_note: adminNote || '',
+            reviewed_at: new Date().toISOString()
+        }).eq('id', applicationId);
+
+        // If approved, upgrade user role to VIP
+        if (action === 'approved') {
+            await supabase.from('user_roles').upsert({
+                user_id: app.user_id,
+                email: app.user_email,
+                role: 'vip',
+                updated_at: new Date().toISOString()
+            });
+        }
+
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 app.post('/api/backtest', async (req, res) => {
     try {
-        const { asset, timeframe, paramConfig, capitalConfig } = req.body;
+        const { asset, timeframe, paramConfig, capitalConfig, userId, userEmail } = req.body;
+
+        // --- Usage Limit Check ---
+        if (userId) {
+            const role = await getUserRole(userId, userEmail || '');
+            if (role === 'basic') {
+                const usageCount = await getMonthlyUsage(userId);
+                if (usageCount >= BASIC_MONTHLY_LIMIT) {
+                    return res.json({ success: false, error: 'USAGE_LIMIT_EXCEEDED', usageCount, limit: BASIC_MONTHLY_LIMIT });
+                }
+            }
+        }
 
         // Traditional finance → Yahoo Finance; Crypto → Binance (default)
         const yahooMap = {
@@ -445,6 +602,9 @@ app.post('/api/backtest', async (req, res) => {
         const raw = best.chartData;
         const step = Math.max(1, Math.ceil(raw.length / 200));
         const chartData = raw.filter((_, idx) => idx % step === 0 || idx === raw.length - 1);
+
+        // Increment usage after successful backtest
+        if (userId) await incrementUsage(userId);
 
         res.json({
             success: true,

@@ -64,11 +64,26 @@ plotshape(short_condition, style=shape.triangledown, location=location.abovebar,
 alertcondition(long_condition,  title="三刀流多頭進場", message="黃金 1H 多頭排列形成，建議做多")
 alertcondition(short_condition, title="三刀流空頭進場", message="黃金 1H 空頭排列形成，建議做空")`;
 
+const ADMIN_EMAIL = 'nbamoment@gmail.com';
+const BASIC_LIMIT = 30;
+
 export default function App() {
     const { user } = useUser();
-    const [step, setStep] = useState(0); // 0: Landing, 1: Input, 2: Processing, 3: Results, 4: History
+    const [step, setStep] = useState(0); // 0: Landing, 1: Input, 2: Processing, 3: Results, 4: History, 5: Admin
     const [history, setHistory] = useState([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+    // --- Membership State ---
+    const [userRole, setUserRole] = useState('basic'); // 'basic', 'vip', 'admin'
+    const [usageCount, setUsageCount] = useState(0);
+    const [showApplyModal, setShowApplyModal] = useState(false);
+    const [applyScreenshot, setApplyScreenshot] = useState(null);
+    const [applyStatus, setApplyStatus] = useState(null); // null | 'uploading' | 'done' | 'error'
+    const [applyMessage, setApplyMessage] = useState('');
+
+    // --- Admin State ---
+    const [adminApplications, setAdminApplications] = useState([]);
+    const [isLoadingAdmin, setIsLoadingAdmin] = useState(false);
 
 
     // -------------------------------------------------------------------------
@@ -183,6 +198,81 @@ export default function App() {
         setStep(1);
     };
 
+
+    // Fetch user role & usage on login
+    useEffect(() => {
+        if (!user) return;
+        const fetchStatus = async () => {
+            const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
+            const params = new URLSearchParams({ userId: user.id, email: user.primaryEmailAddress?.emailAddress || '' });
+            const res = await fetch(`${apiBase}/api/user/status?${params}`);
+            const data = await res.json();
+            setUserRole(data.role);
+            setUsageCount(data.usageCount);
+        };
+        fetchStatus();
+    }, [user]);
+
+    // Admin: fetch applications
+    const fetchAdminApplications = async () => {
+        if (!user) return;
+        setIsLoadingAdmin(true);
+        const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
+        const email = user.primaryEmailAddress?.emailAddress || '';
+        const res = await fetch(`${apiBase}/api/admin/applications?email=${encodeURIComponent(email)}`);
+        const data = await res.json();
+        if (data.success) setAdminApplications(data.applications);
+        setIsLoadingAdmin(false);
+    };
+
+    const handleAdminReview = async (applicationId, action) => {
+        const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
+        const email = user.primaryEmailAddress?.emailAddress || '';
+        await fetch(`${apiBase}/api/admin/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, applicationId, action })
+        });
+        fetchAdminApplications();
+    };
+
+    // VIP Application: upload screenshot then submit
+    const handleApplyVip = async () => {
+        if (!applyScreenshot) { setApplyMessage('請先選擇截圖檔案'); return; }
+        setApplyStatus('uploading');
+        setApplyMessage('正在上傳截圖...');
+        try {
+            const file = applyScreenshot;
+            const ext = file.name.split('.').pop();
+            const path = `${user.id}_${Date.now()}.${ext}`;
+            const { error: uploadError } = await supabase.storage
+                .from('vip-screenshots')
+                .upload(path, file, { upsert: true });
+
+            if (uploadError) throw new Error(uploadError.message);
+
+            const { data: urlData } = supabase.storage.from('vip-screenshots').getPublicUrl(path);
+            const screenshotUrl = urlData.publicUrl;
+
+            const apiBase = import.meta.env.PROD ? '' : 'http://localhost:3001';
+            const res = await fetch(`${apiBase}/api/user/apply-vip`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: user.id,
+                    email: user.primaryEmailAddress?.emailAddress || '',
+                    userName: user.fullName || user.firstName || '',
+                    screenshotUrl
+                })
+            });
+            const data = await res.json();
+            setApplyStatus(data.success ? 'done' : 'error');
+            setApplyMessage(data.success ? data.message : data.error);
+        } catch (e) {
+            setApplyStatus('error');
+            setApplyMessage('上傳失敗：' + e.message);
+        }
+    };
 
     // 從 Supabase 抓取可交易的市場資產列表，這會在組件掛載時觸發一次
     useEffect(() => {
@@ -405,17 +495,27 @@ export default function App() {
                     asset,
                     timeframe,
                     paramConfig,
-                    capitalConfig
+                    capitalConfig,
+                    userId: user?.id,
+                    userEmail: user?.primaryEmailAddress?.emailAddress || ''
                 })
             });
 
             const data = await res.json();
 
             if (!data.success) {
+                if (data.error === 'USAGE_LIMIT_EXCEEDED') {
+                    setStep(1);
+                    setShowApplyModal(true);
+                    return;
+                }
                 alert("回測引擎發生錯誤: " + data.error);
                 setStep(1);
                 return;
             }
+
+            // Refresh usage count after successful backtest
+            setUsageCount(prev => prev + 1);
 
             const {
                 trades, chartData, netProfit, netProfitPct, grossProfit, grossLoss,
@@ -569,13 +669,31 @@ export default function App() {
                             <Activity color="var(--accent)" />
                             BacktestNOW
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            {/* Usage badge */}
+                            {userRole === 'basic' && (
+                                <div
+                                    onClick={() => setShowApplyModal(true)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0.35rem 0.75rem', borderRadius: '2rem', background: usageCount >= BASIC_LIMIT ? 'rgba(239,83,80,0.15)' : 'rgba(41,98,255,0.1)', border: `1px solid ${usageCount >= BASIC_LIMIT ? 'var(--danger)' : 'var(--accent)'}`, cursor: 'pointer', fontSize: '0.8rem', color: usageCount >= BASIC_LIMIT ? 'var(--danger)' : 'var(--accent)', fontWeight: '600' }}
+                                    title="點擊申請 VIP 解鎖無限次數"
+                                >
+                                    <Zap size={14} /> {usageCount}/{BASIC_LIMIT} 次 · 申請升級
+                                </div>
+                            )}
+                            {userRole === 'vip' && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0.35rem 0.75rem', borderRadius: '2rem', background: 'rgba(0,195,124,0.1)', border: '1px solid var(--success)', fontSize: '0.8rem', color: 'var(--success)', fontWeight: '600' }}>
+                                    <Shield size={14} /> VIP · 無限次數
+                                </div>
+                            )}
+                            {userRole === 'admin' && (
+                                <button className="btn" onClick={() => { fetchAdminApplications(); setStep(5); }} style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}>
+                                    <Settings size={14} /> 管理後台
+                                </button>
+                            )}
                             <button className="btn btn-history" onClick={() => { fetchHistory(); setStep(4); }}>
                                 <History size={18} /> 歷史紀錄
                             </button>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <span style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{user?.fullName || user?.firstName || 'Trader'}</span>
-                            </div>
+                            <span style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>{user?.fullName || user?.firstName || 'Trader'}</span>
                             <UserButton />
                         </div>
                     </header>
@@ -1206,6 +1324,111 @@ export default function App() {
                         </div>
                     )}
 
+
+                    {/* ── Admin Panel (Step 5) ── */}
+                    {step === 5 && (
+                        <div className="glass-panel">
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-highlight)' }}>
+                                    <Settings size={24} color="var(--accent)" /> VIP 申請管理後台
+                                </h2>
+                                <button className="btn" onClick={() => setStep(1)}>返回</button>
+                            </div>
+                            {isLoadingAdmin ? (
+                                <p style={{ color: 'var(--text-secondary)' }}>載入中...</p>
+                            ) : adminApplications.length === 0 ? (
+                                <div className="history-empty"><AlertCircle size={40} style={{ opacity: 0.2, marginBottom: '1rem' }} /><p>目前沒有任何申請</p></div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                    {adminApplications.map(app => (
+                                        <div key={app.id} style={{ background: 'var(--bg-panel)', border: `1px solid ${app.status === 'approved' ? 'var(--success)' : app.status === 'rejected' ? 'var(--danger)' : 'var(--border-color)'}`, borderRadius: '0.75rem', padding: '1.5rem' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                                                <div>
+                                                    <div style={{ fontWeight: 'bold', color: 'var(--text-highlight)', marginBottom: '0.25rem' }}>{app.user_name || '未知用戶'}</div>
+                                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{app.user_email}</div>
+                                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>{new Date(app.created_at).toLocaleString('zh-TW')}</div>
+                                                </div>
+                                                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                                    <span style={{ padding: '0.2rem 0.8rem', borderRadius: '1rem', fontSize: '0.8rem', fontWeight: 'bold', background: app.status === 'approved' ? 'rgba(0,195,124,0.15)' : app.status === 'rejected' ? 'rgba(239,83,80,0.15)' : 'rgba(255,193,7,0.15)', color: app.status === 'approved' ? 'var(--success)' : app.status === 'rejected' ? 'var(--danger)' : '#ffc107' }}>
+                                                        {app.status === 'approved' ? '已核准' : app.status === 'rejected' ? '已拒絕' : '待審核'}
+                                                    </span>
+                                                    {app.status === 'pending' && (
+                                                        <>
+                                                            <button className="btn btn-primary" style={{ padding: '0.3rem 1rem', fontSize: '0.85rem' }} onClick={() => handleAdminReview(app.id, 'approved')}>
+                                                                <CheckCircle2 size={14} /> 核准
+                                                            </button>
+                                                            <button className="btn" style={{ padding: '0.3rem 1rem', fontSize: '0.85rem', borderColor: 'var(--danger)', color: 'var(--danger)' }} onClick={() => handleAdminReview(app.id, 'rejected')}>
+                                                                <Trash2 size={14} /> 拒絕
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            {app.screenshot_url && (
+                                                <div style={{ marginTop: '1rem' }}>
+                                                    <a href={app.screenshot_url} target="_blank" rel="noreferrer">
+                                                        <img src={app.screenshot_url} alt="交易平台截圖" style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: '0.5rem', border: '1px solid var(--border-color)', objectFit: 'contain' }} />
+                                                    </a>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ── VIP Application Modal ── */}
+                    {showApplyModal && (
+                        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+                            <div style={{ background: 'var(--bg-panel)', border: '1px solid var(--border-color)', borderRadius: '1rem', padding: '2rem', width: '100%', maxWidth: '480px', position: 'relative' }}>
+                                <button onClick={() => { setShowApplyModal(false); setApplyStatus(null); setApplyMessage(''); setApplyScreenshot(null); }} style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.5rem', lineHeight: 1 }}>×</button>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                                    <Shield size={22} color="var(--success)" />
+                                    <h3 style={{ color: 'var(--text-highlight)', margin: 0 }}>申請 VIP 解鎖無限回測</h3>
+                                </div>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+                                    上傳您目前使用的交易平台帳號截圖（需清楚顯示帳號），管理員審核通過後即可享受無限次回測。
+                                </p>
+
+                                {applyStatus === 'done' ? (
+                                    <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+                                        <CheckCircle2 size={48} color="var(--success)" style={{ marginBottom: '1rem' }} />
+                                        <p style={{ color: 'var(--success)', fontWeight: 'bold' }}>{applyMessage}</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div style={{ border: '2px dashed var(--border-color)', borderRadius: '0.75rem', padding: '1.5rem', textAlign: 'center', marginBottom: '1rem', cursor: 'pointer', background: applyScreenshot ? 'rgba(0,195,124,0.05)' : 'transparent' }}
+                                            onClick={() => document.getElementById('vip-file-input').click()}>
+                                            <input id="vip-file-input" type="file" accept="image/*" style={{ display: 'none' }} onChange={e => setApplyScreenshot(e.target.files[0])} />
+                                            {applyScreenshot ? (
+                                                <>
+                                                    <CheckCircle2 size={32} color="var(--success)" style={{ marginBottom: '0.5rem' }} />
+                                                    <p style={{ color: 'var(--success)', fontSize: '0.9rem' }}>{applyScreenshot.name}</p>
+                                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>點擊重新選擇</p>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Upload size={32} color="var(--text-secondary)" style={{ marginBottom: '0.5rem' }} />
+                                                    <p style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>點擊選擇截圖</p>
+                                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>支援 JPG / PNG，最大 5MB</p>
+                                                </>
+                                            )}
+                                        </div>
+                                        {applyMessage && (
+                                            <p style={{ color: applyStatus === 'error' ? 'var(--danger)' : 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>{applyMessage}</p>
+                                        )}
+                                        <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}
+                                            disabled={applyStatus === 'uploading'}
+                                            onClick={handleApplyVip}>
+                                            {applyStatus === 'uploading' ? '上傳中...' : <><ArrowRight size={16} /> 送出申請</>}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Basic Pulse Animation Keyframes */}
                     <style dangerouslySetInnerHTML={{
