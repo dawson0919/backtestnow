@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install only production dependencies (dist is pre-built and committed)
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 # Copy source + pre-built dist (no vite build step needed)
 COPY . .
