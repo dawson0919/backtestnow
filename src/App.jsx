@@ -532,35 +532,46 @@ export default function App() {
             const rewrittenCode = (() => {
                 let optimizedCode = code;
                 const optimizedParams = bestParams || paramConfig;
+                const notInjected = {};
 
                 // For each optimized parameter, find its input() declaration and replace the default value
                 Object.entries(optimizedParams).forEach(([varName, optimizedValue]) => {
-                    // Match lines like: varName = input(123, ...) or varName = input.int(123, ...)
-                    // Replaces the first numeric literal after the opening parenthesis
                     const lineRegex = new RegExp(
                         `^(\\s*${varName}\\s*=\\s*input(?:\\.(?:int|float|bool))?)\\(([^,)]+)`,
                         'gm'
                     );
-                    optimizedCode = optimizedCode.replace(lineRegex, (match, prefix, _oldVal) => {
+                    const newCode = optimizedCode.replace(lineRegex, (match, prefix, _oldVal) => {
                         return `${prefix}(${optimizedValue}`;
                     });
+                    // Track params that had no matching input() line
+                    if (newCode === optimizedCode) {
+                        notInjected[varName] = optimizedValue;
+                    }
+                    optimizedCode = newCode;
                 });
 
-                // Prepend an AI optimization header comment
+                // Build header with OPTIMIZED values (not original midpoints)
                 const header = [
                     `//@version=5`,
                     `// ═══════════════════════════════════════════════════════════`,
                     `// 🤖 AI 優化版 PineScript`,
                     `// 標的     : ${asset}`,
                     `// 優化時間 : ${new Date().toLocaleString('zh-TW')}`,
-                    `// 優化參數 : ${Object.entries(paramConfig).map(([k, v]) => `${k}=${v}`).join(', ')}`,
+                    `// 優化參數 : ${Object.entries(optimizedParams).map(([k, v]) => `${k}=${v}`).join(', ')}`,
                     `// ═══════════════════════════════════════════════════════════`,
                     ``
                 ].join('\n');
 
-                // Remove the original //@version=5 line to avoid duplication
+                // Append params not found in script as input() declarations at the bottom
+                const extras = Object.keys(notInjected).length > 0
+                    ? '\n// ── AI 注入的額外風控參數 ──\n' +
+                      Object.entries(notInjected).map(([k, v]) =>
+                          `${k} = input.float(${v}, title="${k} (AI 優化)", step=0.5)`
+                      ).join('\n') + '\n'
+                    : '';
+
                 const codeWithoutVersion = optimizedCode.replace(/^\/\/@version=\d+\s*/m, '');
-                return header + codeWithoutVersion;
+                return header + codeWithoutVersion + extras;
             })();
             const currencySymbol = assetType === 'crypto' ? 'USDT' : 'USD';
             const defaultCapital = assetType === 'crypto' ? 10000 : 50000;
