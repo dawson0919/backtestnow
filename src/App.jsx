@@ -714,7 +714,7 @@ export default function App() {
                                         <select className="form-select" value={timeframe} onChange={e => setTimeframe(e.target.value)}>
                                             <option value="1H">1H</option>
                                             <option value="4H">4H</option>
-                                            <option value="DAILY">DAILY</option>
+                                            <option value="D">DAILY</option>
                                         </select>
                                     </div>
                                 </div>
