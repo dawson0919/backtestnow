@@ -420,41 +420,19 @@ export default function App() {
             const {
                 trades, chartData, netProfit, netProfitPct, grossProfit, grossLoss,
                 maxDrawdownPct, maxDrawdownAbs, totalTrades, winningTrades, buyAndHoldReturn,
-                sharpeRatio, sortinoRatio, profitFactor, winRateStr
+                sharpeRatio, sortinoRatio, profitFactor, winRateStr,
+                topStrategies: serverTopStrategies, paramConfig: bestParams, avgBarsInTrade
             } = data;
 
             setProgress(100);
 
-            // 寫出一段優化後的假想腳本
-            // 模擬生成前三大優化結果 (根據最佳參數微調)
-            const secondBestParamsObj = { ...paramConfig };
-            const thirdBestParamsObj = { ...paramConfig };
-
-            // 隨機擾動函式，模擬 AI 尋找到的其他局部最佳解
-            const mutateParams = (obj) => {
-                const newObj = { ...obj };
-                Object.keys(newObj).forEach(key => {
-                    const original = newObj[key];
-                    if (typeof original === 'number') {
-                        const shift = Math.random() > 0.5 ? 1 : -1;
-                        const factor = 1 + (Math.random() * 0.15 * shift); // +/- 15% 擾動
-                        let newVal = Math.round(original * factor);
-                        if (newVal === original) newVal += shift; // 確保一定有變化
-                        newObj[key] = Math.max(1, newVal);
-                    }
-                });
-                return newObj;
-            };
-
-            const strategy2Params = mutateParams(paramConfig);
-            const strategy3Params = mutateParams(strategy2Params);
-
-            // --- Rewrite PineScript with optimized parameters ---
+            // --- Rewrite PineScript with the actual best parameters found by the engine ---
             const rewrittenCode = (() => {
                 let optimizedCode = code;
+                const optimizedParams = bestParams || paramConfig;
 
                 // For each optimized parameter, find its input() declaration and replace the default value
-                Object.entries(paramConfig).forEach(([varName, optimizedValue]) => {
+                Object.entries(optimizedParams).forEach(([varName, optimizedValue]) => {
                     // Match lines like: varName = input(123, ...) or varName = input.int(123, ...)
                     // Replaces the first numeric literal after the opening parenthesis
                     const lineRegex = new RegExp(
@@ -505,19 +483,15 @@ export default function App() {
                 grossLoss: `-${grossLoss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
                 maxDrawdown: `${maxDrawdownPct.toFixed(2)}%`,
                 maxDrawdownAbsolute: `-${maxDrawdownAbs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySymbol}`,
-                buyAndHoldReturn: `+${buyAndHoldReturn}%`,
+                buyAndHoldReturn: `${Number(buyAndHoldReturn) >= 0 ? '+' : ''}${buyAndHoldReturn}%`,
                 sharpeRatio,
                 sortinoRatio,
                 profitFactor,
                 winRate: `${winRateStr}%`,
                 totalTrades: totalTrades.toString(),
                 avgTrade: totalTrades > 0 ? `${netProfit > 0 ? '+' : ''}${(netProfit / totalTrades).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySymbol}` : '0',
-                avgBarsInTrade: '無資料',
-                topStrategies: [
-                    { roi: `+${netProfitPct}%`, params: paramConfig },
-                    { roi: `+${(Number(netProfitPct) * 0.88).toFixed(2)}%`, params: strategy2Params },
-                    { roi: `+${(Number(netProfitPct) * 0.76).toFixed(2)}%`, params: strategy3Params }
-                ],
+                avgBarsInTrade: avgBarsInTrade ?? '無資料',
+                topStrategies: serverTopStrategies || [],
                 trades: trades
             });
 

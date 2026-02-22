@@ -83,32 +83,32 @@ app.post('/api/backtest', async (req, res) => {
             // 2. Check last update
             const { data: lastRecord } = await supabase
                 .from('historical_data')
-                .select('timestamp')
+                .select('timestamp, created_at, asset_id')
                 .eq('asset_id', assetId)
                 .eq('timeframe', timeframe)
                 .order('timestamp', { ascending: false })
                 .limit(1);
 
-            const oneHourAgo = Date.now() - (60 * 60 * 1000);
+            // Cache freshness window: match the timeframe
+            const cacheWindowMs = {
+                '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+                '1H': 60, '2H': 120, '4H': 240, 'D': 1440
+            };
+            const windowMs = (cacheWindowMs[timeframe] || 60) * 60 * 1000;
+            const cacheThreshold = new Date(Date.now() - windowMs).toISOString();
 
-            if (lastRecord && lastRecord.length > 0 && lastRecord[0].timestamp > oneHourAgo) {
+            if (lastRecord && lastRecord.length > 0 && lastRecord[0].created_at > cacheThreshold) {
                 // Fetch from DB
                 console.log(`[Cache] Fetching ${asset} ${timeframe} from Database...`);
                 const { data: dbKlines } = await supabase
                     .from('historical_data')
                     .select('*')
-                    .eq('asset_id', assetId)
+                    .eq('asset_id', lastRecord[0].asset_id)
                     .eq('timeframe', timeframe)
-                    .order('timestamp', { ascending: true })
-                    .limit(1000);
+                    .order('timestamp', { ascending: true });
 
                 klines = dbKlines.map(k => [
-                    k.timestamp,
-                    null, // open (not fully used in current logic, but following binance format)
-                    k.high,
-                    k.low,
-                    k.close,
-                    null, // volume
+                    k.timestamp, k.open, k.high, k.low, k.close, k.volume,
                     null, null, null, null, null // padding
                 ]);
             } else {
@@ -222,223 +222,216 @@ app.post('/api/backtest', async (req, res) => {
 
         const dates = validKlines.map(k => new Date(k[0]));
 
-        // Setup real trading parameters according to the provided ones in UI
-        const fastLen = Math.floor(paramConfig.fast_len || paramConfig.length || 10);
-        const slowLen = Math.floor(paramConfig.slow_len || fastLen * 2);
-        const stopLoss = paramConfig.stopLoss || 5;
-        const takeProfit = paramConfig.takeProfit || 10;
+        // --- Core Simulation Function ---
+        function runSimulation(params) {
+            const fastLen = Math.floor(params.fast_len || params.length || 10);
+            const slowLen = Math.floor(params.slow_len || Math.max(fastLen * 2, fastLen + 5));
+            const stopLoss = params.stopLoss || 5;
+            const takeProfit = params.takeProfit || 10;
 
-        // Perform SMA crossover
-        const fastSma = SMA.calculate({ period: fastLen, values: closes });
-        const slowSma = SMA.calculate({ period: slowLen, values: closes });
+            if (fastLen >= slowLen || fastLen < 2 || slowLen < 3) return null;
 
-        // Align arrays because technical indicators shortens the output array
-        const paddedFastSma = Array(fastLen - 1).fill(null).concat(fastSma);
-        const paddedSlowSma = Array(slowLen - 1).fill(null).concat(slowSma);
+            const fastSma = SMA.calculate({ period: fastLen, values: closes });
+            const slowSma = SMA.calculate({ period: slowLen, values: closes });
+
+            const paddedFastSma = Array(fastLen - 1).fill(null).concat(fastSma);
+            const paddedSlowSma = Array(slowLen - 1).fill(null).concat(slowSma);
+
+            const defaultCapital = isYahoo ? 50000 : 10000;
+            let initialCapital = (capitalConfig?.mode === 'fixed' && capitalConfig?.value && Number(capitalConfig.value) > 0)
+                ? Number(capitalConfig.value)
+                : defaultCapital;
+            let capital = initialCapital;
+            let position = null;
+            let currentTrades = [];
+            let chartDataArr = [];
+            let peakCapital = capital;
+            let maxDrawdownAbs = 0;
+            let grossProfit = 0;
+            let grossLoss = 0;
+            let winningTrades = 0;
+            let totalBarsHeld = 0;
+            let closedTradeCount = 0;
+
+            for (let i = 1; i < closes.length; i++) {
+                const currentClose = closes[i];
+                const currentHigh = highs[i];
+                const currentLow = lows[i];
+                const currentFast = paddedFastSma[i];
+                const currentSlow = paddedSlowSma[i];
+                const prevFast = paddedFastSma[i - 1];
+                const prevSlow = paddedSlowSma[i - 1];
+
+                if (currentFast === null || currentSlow === null || prevFast === null || prevSlow === null) continue;
+
+                if (position) {
+                    let exitPrice = null;
+                    let signal = '';
+
+                    if (position.type === 'long') {
+                        if (spec) {
+                            if (position.entryPrice - currentLow >= stopLoss) {
+                                exitPrice = position.entryPrice - stopLoss;
+                                signal = '止損 (Stop Loss)';
+                            } else if (currentHigh - position.entryPrice >= takeProfit) {
+                                exitPrice = position.entryPrice + takeProfit;
+                                signal = '止盈 (Take Profit)';
+                            }
+                        } else {
+                            if ((position.entryPrice - currentLow) / position.entryPrice * 100 >= stopLoss) {
+                                exitPrice = position.entryPrice * (1 - (stopLoss / 100));
+                                signal = '止損 (Stop Loss)';
+                            } else if ((currentHigh - position.entryPrice) / position.entryPrice * 100 >= takeProfit) {
+                                exitPrice = position.entryPrice * (1 + (takeProfit / 100));
+                                signal = '止盈 (Take Profit)';
+                            }
+                        }
+                        if (!exitPrice && prevFast >= prevSlow && currentFast < currentSlow) {
+                            exitPrice = currentClose;
+                            signal = 'MA 交叉 (MA Cross)';
+                        }
+                    } else {
+                        if (spec) {
+                            if (currentHigh - position.entryPrice >= stopLoss) {
+                                exitPrice = position.entryPrice + stopLoss;
+                                signal = '止損 (Stop Loss)';
+                            } else if (position.entryPrice - currentLow >= takeProfit) {
+                                exitPrice = position.entryPrice - takeProfit;
+                                signal = '止盈 (Take Profit)';
+                            }
+                        } else {
+                            if ((currentHigh - position.entryPrice) / position.entryPrice * 100 >= stopLoss) {
+                                exitPrice = position.entryPrice * (1 + (stopLoss / 100));
+                                signal = '止損 (Stop Loss)';
+                            } else if ((position.entryPrice - currentLow) / position.entryPrice * 100 >= takeProfit) {
+                                exitPrice = position.entryPrice * (1 - (takeProfit / 100));
+                                signal = '止盈 (Take Profit)';
+                            }
+                        }
+                        if (!exitPrice && prevFast <= prevSlow && currentFast > currentSlow) {
+                            exitPrice = currentClose;
+                            signal = 'MA 交叉 (MA Cross)';
+                        }
+                    }
+
+                    if (exitPrice) {
+                        const priceDiff = position.type === 'long' ? exitPrice - position.entryPrice : position.entryPrice - exitPrice;
+                        const pnlVal = spec ? (priceDiff * spec.pointValue * numContracts) : (capital * (priceDiff / position.entryPrice));
+
+                        capital += pnlVal;
+                        totalBarsHeld += (i - position.entryIndex);
+                        closedTradeCount++;
+                        if (pnlVal > 0) { winningTrades++; grossProfit += pnlVal; } else { grossLoss += Math.abs(pnlVal); }
+
+                        currentTrades.push({
+                            id: currentTrades.length + 1,
+                            type: position.type === 'long' ? 'Long Exit' : 'Short Exit',
+                            signal,
+                            price: exitPrice.toLocaleString(),
+                            pnl: `${pnlVal > 0 ? '+' : ''}${pnlVal.toFixed(2)}`,
+                            pnlValue: pnlVal,
+                            timeStr: dates[i].toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+                            typeColor: pnlVal > 0 ? 'var(--success)' : 'var(--danger)'
+                        });
+                        position = null;
+                    }
+                } else {
+                    if (prevFast < prevSlow && currentFast >= currentSlow) {
+                        position = { type: 'long', entryPrice: currentClose, entryIndex: i };
+                        currentTrades.push({
+                            id: currentTrades.length + 1,
+                            type: 'Long Entry',
+                            signal: 'MA 交叉 (MA Cross)',
+                            price: currentClose.toLocaleString(),
+                            pnl: '-',
+                            timeStr: dates[i].toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+                            typeColor: 'var(--text-highlight)'
+                        });
+                    } else if (prevFast > prevSlow && currentFast <= currentSlow) {
+                        position = { type: 'short', entryPrice: currentClose, entryIndex: i };
+                        currentTrades.push({
+                            id: currentTrades.length + 1,
+                            type: 'Short Entry',
+                            signal: 'MA 交叉 (MA Cross)',
+                            price: currentClose.toLocaleString(),
+                            pnl: '-',
+                            timeStr: dates[i].toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+                            typeColor: 'var(--text-highlight)'
+                        });
+                    }
+                }
+                if (capital > peakCapital) peakCapital = capital;
+                const ddAbs = peakCapital - capital;
+                if (ddAbs > maxDrawdownAbs) maxDrawdownAbs = ddAbs;
+
+                chartDataArr.push({
+                    name: dates[i].toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                    equity: Number(capital.toFixed(2))
+                });
+            }
+
+            const netProfit = capital - initialCapital;
+            return {
+                netProfit,
+                netProfitPct: ((netProfit / initialCapital) * 100).toFixed(2),
+                grossProfit,
+                grossLoss,
+                maxDrawdownAbs,
+                maxDrawdownPct: peakCapital > 0 ? (maxDrawdownAbs / peakCapital) * 100 : 0,
+                totalTrades: currentTrades.length,
+                winningTrades,
+                avgBarsInTrade: closedTradeCount > 0 ? (totalBarsHeld / closedTradeCount).toFixed(1) : '0',
+                trades: currentTrades,
+                chartData: chartDataArr,
+                params
+            };
+        }
 
         const defaultCapital = isYahoo ? 50000 : 10000;
-        // Only use capitalConfig.value as capital when mode is 'fixed' (explicit dollar amount)
-        // When mode is 'contracts', value = number of contracts (not dollars) — use defaultCapital instead
         let initialCapital = (capitalConfig?.mode === 'fixed' && capitalConfig?.value && Number(capitalConfig.value) > 0)
             ? Number(capitalConfig.value)
             : defaultCapital;
-        let capital = initialCapital;
 
-        let position = null;
-        let trades = [];
-        let chartData = [];
+        // --- Real Parameter Optimization Loop ---
+        console.log(`Starting real optimization for ${asset}...`);
+        const results_list = [];
 
-        let peakCapital = capital;
-        let maxDrawdownAbs = 0;
-        let grossProfit = 0;
-        let grossLoss = 0;
-        let winningTrades = 0;
+        // Derive base fast/slow from paramConfig, falling back to sensible defaults
+        const baseFast = Math.max(2, Math.floor(paramConfig.fast_len || paramConfig.length || 10));
+        const baseSlow = Math.max(baseFast + 3, Math.floor(paramConfig.slow_len || baseFast * 2));
 
-        for (let i = 1; i < closes.length; i++) {
-            const currentClose = closes[i];
-            const currentHigh = highs[i];
-            const currentLow = lows[i];
-            const currentDate = dates[i];
-            const currentFast = paddedFastSma[i];
-            const currentSlow = paddedSlowSma[i];
+        const fastMin = Math.max(2, baseFast - 5);
+        const fastMax = baseFast + 5;
+        const slowMin = Math.max(fastMax + 1, baseSlow - 10);
+        const slowMax = baseSlow + 10;
 
-            const prevFast = paddedFastSma[i - 1];
-            const prevSlow = paddedSlowSma[i - 1];
-
-            if (currentFast === null || currentSlow === null || prevFast === null || prevSlow === null) {
-                chartData.push({
-                    name: currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                    equity: Number(capital.toFixed(2))
-                });
-                continue;
+        for (let f = fastMin; f <= fastMax; f += 2) {
+            for (let s = slowMin; s <= slowMax; s += 5) {
+                const result = runSimulation({ ...paramConfig, fast_len: f, slow_len: s });
+                if (result) results_list.push(result);
             }
-
-            // Resolution Logic (Exit)
-            if (position) {
-                let exitPrice = null;
-                let signal = '';
-                let pnlRatio = 0;
-
-                if (position.type === 'long') {
-                    const priceDropPct = (position.entryPrice - currentLow) / position.entryPrice * 100;
-                    const priceGainPct = (currentHigh - position.entryPrice) / position.entryPrice * 100;
-
-                    if (priceDropPct >= stopLoss) {
-                        exitPrice = position.entryPrice * (1 - (stopLoss / 100)); // Executed at Stop
-                        signal = '止損 (Stop Loss)';
-                    } else if (priceGainPct >= takeProfit) {
-                        exitPrice = position.entryPrice * (1 + (takeProfit / 100)); // Executed at TP
-                        signal = '止盈 (Take Profit)';
-                    } else if (prevFast >= prevSlow && currentFast < currentSlow) {
-                        exitPrice = currentClose; // Executed on Signal Reverse
-                        signal = 'MA 交叉 (MA Cross)';
-                    }
-
-                    if (exitPrice) pnlRatio = (exitPrice - position.entryPrice) / position.entryPrice;
-
-                } else if (position.type === 'short') {
-                    const priceDropPct = (currentHigh - position.entryPrice) / position.entryPrice * 100; // For a short, high price triggers stop loss (price drop relative to direction)
-                    const priceGainPct = (position.entryPrice - currentLow) / position.entryPrice * 100;
-
-                    if (priceDropPct >= stopLoss) {
-                        exitPrice = position.entryPrice * (1 + (stopLoss / 100)); // Executed at Stop
-                        signal = '止損 (Stop Loss)';
-                    } else if (priceGainPct >= takeProfit) {
-                        exitPrice = position.entryPrice * (1 - (takeProfit / 100)); // Executed at TP
-                        signal = '止盈 (Take Profit)';
-                    } else if (prevFast <= prevSlow && currentFast > currentSlow) {
-                        exitPrice = currentClose; // Executed on Signal Reverse
-                        signal = 'MA 交叉 (MA Cross)';
-                    }
-
-                    if (exitPrice) pnlRatio = (position.entryPrice - exitPrice) / position.entryPrice;
-                }
-
-                if (exitPrice) {
-                    let pnlVal;
-                    if (spec) {
-                        // Futures: P&L = price diff in points × pointValue × contracts
-                        const priceDiff = position.type === 'long'
-                            ? exitPrice - position.entryPrice
-                            : position.entryPrice - exitPrice;
-                        pnlVal = priceDiff * spec.pointValue * numContracts;
-                    } else {
-                        // Crypto / default: percentage-based on capital
-                        const pnlRatioFinal = position.type === 'long'
-                            ? (exitPrice - position.entryPrice) / position.entryPrice
-                            : (position.entryPrice - exitPrice) / position.entryPrice;
-                        pnlVal = capital * pnlRatioFinal;
-                    }
-                    capital += pnlVal;
-
-                    if (pnlVal > 0) {
-                        winningTrades++;
-                        grossProfit += pnlVal;
-                    } else {
-                        grossLoss += Math.abs(pnlVal);
-                    }
-
-                    trades.push({
-                        id: trades.length + 1,
-                        isWin: pnlVal > 0,
-                        isLong: position.type === 'long',
-                        dateObject: currentDate,
-                        dateStr: currentDate.toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' }),
-                        timeStr: currentDate.toLocaleString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
-                        price: `$${exitPrice.toFixed(2)}`,
-                        pnlValue: pnlVal,
-                        pnl: pnlVal > 0 ? `+${pnlVal.toFixed(2)}` : `${pnlVal.toFixed(2)}`,
-                        signal: signal,
-                        type: position.type === 'long' ? '平多 (Exit Long)' : '平空 (Exit Short)',
-                        typeColor: pnlVal > 0 ? 'var(--success)' : 'var(--danger)'
-                    });
-
-                    position = null;
-                }
-            }
-
-            // Entry Logic
-            if (!position) {
-                if (prevFast <= prevSlow && currentFast > currentSlow) {
-                    position = {
-                        type: 'long',
-                        entryPrice: currentClose,
-                        entryTime: currentDate,
-                    };
-
-                    trades.push({
-                        id: trades.length + 1,
-                        isWin: false,
-                        isLong: true,
-                        dateObject: currentDate,
-                        dateStr: currentDate.toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' }),
-                        timeStr: currentDate.toLocaleString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
-                        price: `$${currentClose.toFixed(2)}`,
-                        pnlValue: 0,
-                        pnl: '-',
-                        signal: 'MA 交叉 (MA Cross)',
-                        type: '做多 (Entry Long)',
-                        typeColor: 'var(--success)'
-                    });
-                } else if (prevFast >= prevSlow && currentFast < currentSlow) {
-                    position = {
-                        type: 'short',
-                        entryPrice: currentClose,
-                        entryTime: currentDate,
-                    };
-
-                    trades.push({
-                        id: trades.length + 1,
-                        isWin: false,
-                        isLong: false,
-                        dateObject: currentDate,
-                        dateStr: currentDate.toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' }),
-                        timeStr: currentDate.toLocaleString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
-                        price: `$${currentClose.toFixed(2)}`,
-                        pnlValue: 0,
-                        pnl: '-',
-                        signal: 'MA 交叉 (MA Cross)',
-                        type: '做空 (Entry Short)',
-                        typeColor: 'var(--danger)'
-                    });
-                }
-            }
-
-            if (capital > peakCapital) peakCapital = capital;
-            const drawdownAbs = peakCapital - capital;
-            if (drawdownAbs > maxDrawdownAbs) {
-                maxDrawdownAbs = drawdownAbs;
-            }
-
-            chartData.push({
-                name: currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                equity: Number(capital.toFixed(2))
-            });
         }
 
-        const totalClosed = trades.filter(t => t.type.includes('Exit')).length;
-        const netProfit = capital - initialCapital;
-        const netProfitPct = ((netProfit / initialCapital) * 100).toFixed(2);
-        let maxDrawdownPct = peakCapital > 0 ? (maxDrawdownAbs / peakCapital) * 100 : 0;
+        if (results_list.length === 0) {
+            return res.json({ success: false, error: '無法生成有效的回測結果，請調整參數範圍' });
+        }
 
-        let buyHoldReturn = ((closes[closes.length - 1] - closes[0]) / closes[0]) * 100;
+        // Sort by net profit descending
+        results_list.sort((a, b) => b.netProfit - a.netProfit);
+        const best = results_list[0];
+        const top3 = results_list.slice(0, 3).map(r => ({
+            roi: `${Number(r.netProfitPct) >= 0 ? '+' : ''}${r.netProfitPct}%`,
+            params: r.params
+        }));
 
-        // --- KPI Calculations ---
-        const winRatePct = totalClosed > 0 ? (winningTrades / totalClosed * 100).toFixed(1) : '0.0';
+        // --- Summary Stats for the best strategy ---
+        const totalClosed = best.trades.filter(t => t.type.includes('Exit')).length;
+        const winRatePct = totalClosed > 0 ? (best.winningTrades / totalClosed * 100).toFixed(1) : '0.0';
+        const profitFactor = best.grossLoss > 0 ? (best.grossProfit / best.grossLoss).toFixed(2) : best.grossProfit > 0 ? '∞' : '0.00';
 
-        const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : grossProfit > 0 ? '∞' : '0.00';
-
-        // Per-trade P&L array for ratio calculations
-        const closedTradePnls = trades
-            .filter(t => t.type.includes('Exit'))
-            .map(t => t.pnlValue);
-
-        const avgPnl = closedTradePnls.length > 0
-            ? closedTradePnls.reduce((a, b) => a + b, 0) / closedTradePnls.length : 0;
-        const stdPnl = closedTradePnls.length > 1
-            ? Math.sqrt(closedTradePnls.map(p => Math.pow(p - avgPnl, 2)).reduce((a, b) => a + b, 0) / closedTradePnls.length)
-            : 0;
-
+        const closedTradePnls = best.trades.filter(t => t.type.includes('Exit')).map(t => t.pnlValue);
+        const avgPnl = closedTradePnls.length > 0 ? closedTradePnls.reduce((a, b) => a + b, 0) / closedTradePnls.length : 0;
+        const stdPnl = closedTradePnls.length > 1 ? Math.sqrt(closedTradePnls.map(p => Math.pow(p - avgPnl, 2)).reduce((a, b) => a + b, 0) / closedTradePnls.length) : 0;
         const sharpeRatio = stdPnl > 0 ? (avgPnl / stdPnl).toFixed(2) : '0.00';
 
         const downPnls = closedTradePnls.filter(p => p < 0);
@@ -447,23 +440,35 @@ app.post('/api/backtest', async (req, res) => {
             : 0;
         const sortinoRatio = downStd > 0 ? (avgPnl / downStd).toFixed(2) : avgPnl > 0 ? '∞' : '0.00';
 
+        const buyAndHoldReturn = (((closes[closes.length - 1] - closes[0]) / closes[0]) * 100).toFixed(2);
+
+        // Downsample chartData to at most 200 points for the frontend
+        const raw = best.chartData;
+        const step = Math.max(1, Math.ceil(raw.length / 200));
+        const chartData = raw.filter((_, idx) => idx % step === 0 || idx === raw.length - 1);
+
         res.json({
             success: true,
-            trades: trades.reverse(),
-            chartData: chartData.filter((_, idx) => idx % Math.ceil(chartData.length / 50) === 0 || idx === chartData.length - 1),
-            netProfit,
-            netProfitPct,
-            grossProfit,
-            grossLoss,
-            maxDrawdownPct,
-            maxDrawdownAbs,
-            totalTrades: totalClosed,
-            winningTrades,
-            buyAndHoldReturn: buyHoldReturn.toFixed(2),
+            asset,
+            initialCapital,
+            trades: best.trades.reverse(),
+            chartData,
+            netProfit: best.netProfit,
+            netProfitPct: best.netProfitPct,
+            grossProfit: best.grossProfit,
+            grossLoss: best.grossLoss,
+            maxDrawdownPct: best.maxDrawdownPct,
+            maxDrawdownAbs: best.maxDrawdownAbs,
+            totalTrades: best.totalTrades,
+            winningTrades: best.winningTrades,
+            avgBarsInTrade: best.avgBarsInTrade,
+            buyAndHoldReturn,
             winRateStr: winRatePct,
             profitFactor,
             sharpeRatio,
             sortinoRatio,
+            topStrategies: top3,
+            paramConfig: best.params
         });
 
     } catch (e) {
