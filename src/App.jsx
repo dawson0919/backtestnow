@@ -712,7 +712,10 @@ export default function App() {
             setStep(3);
 
         } catch (err) {
-            alert('後端連線失敗: 確保 server.js 有開啟! ' + err.message);
+            const hint = !import.meta.env.VITE_API_URL && import.meta.env.PROD
+                ? '\n\n請在 Vercel → Settings → Environment Variables 加入:\nVITE_API_URL = https://你的Railway網址'
+                : '';
+            alert('後端連線失敗\n' + err.message + hint);
             setStep(1);
         }
     };
