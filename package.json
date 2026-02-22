@@ -6,6 +6,7 @@
     "scripts": {
         "dev": "concurrently \"vite\" \"nodemon server.js\"",
         "server": "nodemon server.js",
+        "start": "node server.js",
         "build": "vite build",
         "preview": "vite preview"
     },
@@ -15,13 +16,15 @@
         "axios": "^1.13.5",
         "concurrently": "^9.2.1",
         "cors": "^2.8.6",
+        "dotenv": "^17.3.1",
         "express": "^5.2.1",
         "lucide-react": "^0.453.0",
         "nodemon": "^3.1.14",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
         "recharts": "^3.7.0",
-        "technicalindicators": "^3.1.0"
+        "technicalindicators": "^3.1.0",
+        "yahoo-finance2": "^3.13.0"
     },
     "devDependencies": {
         "@vitejs/plugin-react": "^4.3.3",

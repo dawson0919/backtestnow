@@ -2,12 +2,28 @@ import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import { SMA } from 'technicalindicators';
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
+import yahooFinanceClass from 'yahoo-finance2';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { existsSync } from 'fs';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const yf = new yahooFinanceClass();
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
-const PORT = 3001;
+const supabase = createClient(
+    process.env.VITE_SUPABASE_URL,
+    process.env.VITE_SUPABASE_ANON_KEY
+);
+
+
+const PORT = process.env.PORT || 3001;
 
 function mapInterval(timeframe) {
     const map = {
@@ -21,17 +37,190 @@ app.post('/api/backtest', async (req, res) => {
     try {
         const { asset, timeframe, paramConfig, capitalConfig } = req.body;
 
-        // Convert to Binance Symbol format, if the symbol is anything custom try to normalize
-        const symbol = asset === 'GC!' ? 'XAUUSDT' : asset;
+        // Traditional finance → Yahoo Finance; Crypto → Binance (default)
+        const binanceMap = {}; // pure crypto pairs (e.g. BTCUSDT) need no mapping
+        const yahooMap = {
+            // Index Futures
+            'NQ!': 'NQ=F',      // Nasdaq 100
+            'ES!': 'ES=F',      // S&P 500
+            'YM!': 'YM=F',      // Dow Jones
+            'RTY!': 'RTY=F',    // Russell 2000
+            // Commodity Futures
+            'GC!': 'GC=F',      // Gold
+            'SIL!': 'SI=F',     // Silver
+            'CL!': 'CL=F',      // Crude Oil (WTI)
+            'NG!': 'NG=F',      // Natural Gas
+            'HG!': 'HG=F',      // Copper
+            // Bonds
+            'ZB!': 'ZB=F',      // 30Y Treasury Bond
+            'ZN!': 'ZN=F',      // 10Y Treasury Note
+            // FX Futures
+            'DX!': 'DX-Y.NYB',  // US Dollar Index
+        };
+
+        const symbol = yahooMap[asset] || asset;
         const interval = mapInterval(timeframe);
 
-        // Fetch up to 1000 K-lines (maximum for a single binance request)
-        const { data: klines } = await axios.get(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=1000`);
+        // Determine source
+        const isYahoo = !!yahooMap[asset];
+        const isBinanceFutures = false;
+        const baseUrl = 'https://api.binance.com/api/v3';
 
-        const closes = klines.map(k => parseFloat(k[4]));
-        const highs = klines.map(k => parseFloat(k[2]));
-        const lows = klines.map(k => parseFloat(k[3]));
-        const dates = klines.map(k => new Date(k[0]));
+
+
+        // --- Caching Logic: Fetch from Supabase or Update from Binance ---
+        let klines = [];
+
+        // 1. Find asset_id
+        const { data: assetData } = await supabase
+            .from('assets')
+            .select('id')
+            .eq('symbol', asset)
+            .single();
+
+        if (assetData) {
+            const assetId = assetData.id;
+            // 2. Check last update
+            const { data: lastRecord } = await supabase
+                .from('historical_data')
+                .select('timestamp')
+                .eq('asset_id', assetId)
+                .eq('timeframe', timeframe)
+                .order('timestamp', { ascending: false })
+                .limit(1);
+
+            const oneHourAgo = Date.now() - (60 * 60 * 1000);
+
+            if (lastRecord && lastRecord.length > 0 && lastRecord[0].timestamp > oneHourAgo) {
+                // Fetch from DB
+                console.log(`[Cache] Fetching ${asset} ${timeframe} from Database...`);
+                const { data: dbKlines } = await supabase
+                    .from('historical_data')
+                    .select('*')
+                    .eq('asset_id', assetId)
+                    .eq('timeframe', timeframe)
+                    .order('timestamp', { ascending: true })
+                    .limit(1000);
+
+                klines = dbKlines.map(k => [
+                    k.timestamp,
+                    null, // open (not fully used in current logic, but following binance format)
+                    k.high,
+                    k.low,
+                    k.close,
+                    null, // volume
+                    null, null, null, null, null // padding
+                ]);
+            } else {
+                // Fetch from Network and Update DB
+                if (isYahoo) {
+                    console.log(`[Network] Cache expired or missing. Fetching ${asset} (${symbol}) ${timeframe} from Yahoo Finance...`);
+                    // Map timeframe to Yahoo Finance interval
+                    const yahooInterval = interval === '1d' ? '1d' : '60m';
+                    // Yahoo Finance limits: 1H data max 730 days, 1D has no such limit
+                    const lookbackDays = yahooInterval === '1d' ? 5 * 365 : 700;
+                    const periodStart = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
+                    const chartResult = await yf.chart(symbol, {
+                        period1: periodStart,
+                        interval: yahooInterval
+                    });
+
+
+                    if (chartResult && chartResult.quotes) {
+                        klines = chartResult.quotes.map(q => [
+                            q.date.getTime(),
+                            q.open,
+                            q.high,
+                            q.low,
+                            q.close,
+                            q.volume,
+                            null, null, null, null, null
+                        ]);
+                    }
+                } else {
+                    console.log(`[Network] Cache expired or missing. Fetching ${asset} (${symbol}) ${timeframe} from Binance ${isBinanceFutures ? 'Futures' : 'Spot'} API...`);
+                    const { data: binanceKlines } = await axios.get(`${baseUrl}/klines?symbol=${symbol}&interval=${interval}&limit=1000`);
+                    klines = binanceKlines;
+                }
+
+                // Async Update DB
+                if (klines.length > 0) {
+                    const rowsToInsert = klines.map(k => ({
+                        asset_id: assetId,
+                        timeframe: timeframe,
+                        timestamp: k[0],
+                        open: parseFloat(k[1]) || 0,
+                        high: parseFloat(k[2]) || 0,
+                        low: parseFloat(k[3]) || 0,
+                        close: parseFloat(k[4]) || 0,
+                        volume: parseFloat(k[5]) || 0
+                    }));
+
+                    await supabase.from('historical_data').delete().eq('asset_id', assetId).eq('timeframe', timeframe);
+                    await supabase.from('historical_data').insert(rowsToInsert);
+                }
+            }
+        } else {
+            // Fallback for missing asset config
+            if (isYahoo) {
+                const yahooInterval = interval === '1d' ? '1d' : '60m';
+                const lookbackDays = yahooInterval === '1d' ? 5 * 365 : 700;
+                const periodStart = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
+                const chartResult = await yf.chart(symbol, {
+                    period1: periodStart,
+                    interval: yahooInterval
+                });
+
+                klines = (chartResult.quotes || []).map(q => [
+                    q.date.getTime(), q.open, q.high, q.low, q.close, q.volume, null, null, null, null, null
+                ]);
+            } else {
+                const { data: binanceKlines } = await axios.get(`${baseUrl}/klines?symbol=${symbol}&interval=${interval}&limit=1000`);
+                klines = binanceKlines;
+            }
+        }
+
+        // --- Futures Contract Specs ---
+        // tickSize: minimum price movement
+        // tickValue: USD value per tick per contract
+        // pointValue: USD value per 1 full point (index point or dollar) per contract
+        const contractSpecs = {
+            'NQ!': { tickSize: 0.25, tickValue: 5, pointValue: 20 }, // Nasdaq E-mini: $20/pt
+            'MNQ!': { tickSize: 0.25, tickValue: 0.50, pointValue: 2 }, // Micro Nasdaq: $2/pt
+            'ES!': { tickSize: 0.25, tickValue: 12.50, pointValue: 50 }, // S&P 500 E-mini: $50/pt
+            'MES!': { tickSize: 0.25, tickValue: 1.25, pointValue: 5 }, // Micro S&P: $5/pt
+            'YM!': { tickSize: 1, tickValue: 5, pointValue: 5 }, // Dow E-mini: $5/pt
+            'MYM!': { tickSize: 1, tickValue: 0.50, pointValue: 0.5 }, // Micro Dow: $0.50/pt
+            'RTY!': { tickSize: 0.10, tickValue: 5, pointValue: 50 }, // Russell 2000: $50/pt
+            'GC!': { tickSize: 0.10, tickValue: 10, pointValue: 100 }, // Gold: $100/pt (100 oz)
+            'MGC!': { tickSize: 0.10, tickValue: 1, pointValue: 10 }, // Micro Gold: $10/pt
+            'SIL!': { tickSize: 0.005, tickValue: 25, pointValue: 5000 }, // Silver: $5000/pt (5000 oz)
+            'CL!': { tickSize: 0.01, tickValue: 10, pointValue: 1000 }, // Crude Oil: $1000/pt
+            'NG!': { tickSize: 0.001, tickValue: 10, pointValue: 10000 }, // Nat Gas: $10000/pt
+            'HG!': { tickSize: 0.0005, tickValue: 12.50, pointValue: 25000 }, // Copper: $250/0.01
+            'ZB!': { tickSize: 0.03125, tickValue: 31.25, pointValue: 1000 }, // 30Y Bond
+            'ZN!': { tickSize: 0.015625, tickValue: 15.625, pointValue: 1000 }, // 10Y Note
+        };
+
+        const spec = contractSpecs[asset] || null;
+        const numContracts = capitalConfig?.mode === 'contracts' ? (Number(capitalConfig.value) || 1) : 1;
+
+
+        // Filter out null/NaN/zero entries (Yahoo Finance includes them for market-closed hours)
+        const validKlines = klines.filter(k => {
+            const c = parseFloat(k[4]);
+            return !isNaN(c) && c > 0;
+        });
+
+        if (validKlines.length < 10) {
+            return res.json({ success: false, error: '歷史數據不足，請稍後再試' });
+        }
+
+        const closes = validKlines.map(k => parseFloat(k[4]));
+        const highs = validKlines.map(k => parseFloat(k[2]));
+        const lows = validKlines.map(k => parseFloat(k[3]));
+
+        const dates = validKlines.map(k => new Date(k[0]));
 
         // Setup real trading parameters according to the provided ones in UI
         const fastLen = Math.floor(paramConfig.fast_len || paramConfig.length || 10);
@@ -47,7 +236,12 @@ app.post('/api/backtest', async (req, res) => {
         const paddedFastSma = Array(fastLen - 1).fill(null).concat(fastSma);
         const paddedSlowSma = Array(slowLen - 1).fill(null).concat(slowSma);
 
-        let initialCapital = capitalConfig?.value ? Number(capitalConfig.value) : 10000;
+        const defaultCapital = isYahoo ? 50000 : 10000;
+        // Only use capitalConfig.value as capital when mode is 'fixed' (explicit dollar amount)
+        // When mode is 'contracts', value = number of contracts (not dollars) — use defaultCapital instead
+        let initialCapital = (capitalConfig?.mode === 'fixed' && capitalConfig?.value && Number(capitalConfig.value) > 0)
+            ? Number(capitalConfig.value)
+            : defaultCapital;
         let capital = initialCapital;
 
         let position = null;
@@ -60,7 +254,7 @@ app.post('/api/backtest', async (req, res) => {
         let grossLoss = 0;
         let winningTrades = 0;
 
-        for (let i = 1; i < klines.length; i++) {
+        for (let i = 1; i < closes.length; i++) {
             const currentClose = closes[i];
             const currentHigh = highs[i];
             const currentLow = lows[i];
@@ -91,13 +285,13 @@ app.post('/api/backtest', async (req, res) => {
 
                     if (priceDropPct >= stopLoss) {
                         exitPrice = position.entryPrice * (1 - (stopLoss / 100)); // Executed at Stop
-                        signal = 'Stop Loss';
+                        signal = '止損 (Stop Loss)';
                     } else if (priceGainPct >= takeProfit) {
                         exitPrice = position.entryPrice * (1 + (takeProfit / 100)); // Executed at TP
-                        signal = 'Take Profit';
+                        signal = '止盈 (Take Profit)';
                     } else if (prevFast >= prevSlow && currentFast < currentSlow) {
                         exitPrice = currentClose; // Executed on Signal Reverse
-                        signal = 'MA Cross';
+                        signal = 'MA 交叉 (MA Cross)';
                     }
 
                     if (exitPrice) pnlRatio = (exitPrice - position.entryPrice) / position.entryPrice;
@@ -108,20 +302,33 @@ app.post('/api/backtest', async (req, res) => {
 
                     if (priceDropPct >= stopLoss) {
                         exitPrice = position.entryPrice * (1 + (stopLoss / 100)); // Executed at Stop
-                        signal = 'Stop Loss';
+                        signal = '止損 (Stop Loss)';
                     } else if (priceGainPct >= takeProfit) {
                         exitPrice = position.entryPrice * (1 - (takeProfit / 100)); // Executed at TP
-                        signal = 'Take Profit';
+                        signal = '止盈 (Take Profit)';
                     } else if (prevFast <= prevSlow && currentFast > currentSlow) {
                         exitPrice = currentClose; // Executed on Signal Reverse
-                        signal = 'MA Cross';
+                        signal = 'MA 交叉 (MA Cross)';
                     }
 
                     if (exitPrice) pnlRatio = (position.entryPrice - exitPrice) / position.entryPrice;
                 }
 
                 if (exitPrice) {
-                    const pnlVal = capital * pnlRatio;
+                    let pnlVal;
+                    if (spec) {
+                        // Futures: P&L = price diff in points × pointValue × contracts
+                        const priceDiff = position.type === 'long'
+                            ? exitPrice - position.entryPrice
+                            : position.entryPrice - exitPrice;
+                        pnlVal = priceDiff * spec.pointValue * numContracts;
+                    } else {
+                        // Crypto / default: percentage-based on capital
+                        const pnlRatioFinal = position.type === 'long'
+                            ? (exitPrice - position.entryPrice) / position.entryPrice
+                            : (position.entryPrice - exitPrice) / position.entryPrice;
+                        pnlVal = capital * pnlRatioFinal;
+                    }
                     capital += pnlVal;
 
                     if (pnlVal > 0) {
@@ -136,13 +343,13 @@ app.post('/api/backtest', async (req, res) => {
                         isWin: pnlVal > 0,
                         isLong: position.type === 'long',
                         dateObject: currentDate,
-                        dateStr: currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                        timeStr: currentDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
+                        dateStr: currentDate.toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' }),
+                        timeStr: currentDate.toLocaleString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
                         price: `$${exitPrice.toFixed(2)}`,
                         pnlValue: pnlVal,
                         pnl: pnlVal > 0 ? `+${pnlVal.toFixed(2)}` : `${pnlVal.toFixed(2)}`,
                         signal: signal,
-                        type: position.type === 'long' ? 'Exit Long' : 'Exit Short',
+                        type: position.type === 'long' ? '平多 (Exit Long)' : '平空 (Exit Short)',
                         typeColor: pnlVal > 0 ? 'var(--success)' : 'var(--danger)'
                     });
 
@@ -164,13 +371,13 @@ app.post('/api/backtest', async (req, res) => {
                         isWin: false,
                         isLong: true,
                         dateObject: currentDate,
-                        dateStr: currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                        timeStr: currentDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
+                        dateStr: currentDate.toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' }),
+                        timeStr: currentDate.toLocaleString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
                         price: `$${currentClose.toFixed(2)}`,
                         pnlValue: 0,
                         pnl: '-',
-                        signal: 'MA Cross',
-                        type: 'Entry Long',
+                        signal: 'MA 交叉 (MA Cross)',
+                        type: '做多 (Entry Long)',
                         typeColor: 'var(--success)'
                     });
                 } else if (prevFast >= prevSlow && currentFast < currentSlow) {
@@ -185,13 +392,13 @@ app.post('/api/backtest', async (req, res) => {
                         isWin: false,
                         isLong: false,
                         dateObject: currentDate,
-                        dateStr: currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                        timeStr: currentDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
+                        dateStr: currentDate.toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' }),
+                        timeStr: currentDate.toLocaleString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }),
                         price: `$${currentClose.toFixed(2)}`,
                         pnlValue: 0,
                         pnl: '-',
-                        signal: 'MA Cross',
-                        type: 'Entry Short',
+                        signal: 'MA 交叉 (MA Cross)',
+                        type: '做空 (Entry Short)',
                         typeColor: 'var(--danger)'
                     });
                 }
@@ -216,9 +423,33 @@ app.post('/api/backtest', async (req, res) => {
 
         let buyHoldReturn = ((closes[closes.length - 1] - closes[0]) / closes[0]) * 100;
 
+        // --- KPI Calculations ---
+        const winRatePct = totalClosed > 0 ? (winningTrades / totalClosed * 100).toFixed(1) : '0.0';
+
+        const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : grossProfit > 0 ? '∞' : '0.00';
+
+        // Per-trade P&L array for ratio calculations
+        const closedTradePnls = trades
+            .filter(t => t.type.includes('Exit'))
+            .map(t => t.pnlValue);
+
+        const avgPnl = closedTradePnls.length > 0
+            ? closedTradePnls.reduce((a, b) => a + b, 0) / closedTradePnls.length : 0;
+        const stdPnl = closedTradePnls.length > 1
+            ? Math.sqrt(closedTradePnls.map(p => Math.pow(p - avgPnl, 2)).reduce((a, b) => a + b, 0) / closedTradePnls.length)
+            : 0;
+
+        const sharpeRatio = stdPnl > 0 ? (avgPnl / stdPnl).toFixed(2) : '0.00';
+
+        const downPnls = closedTradePnls.filter(p => p < 0);
+        const downStd = downPnls.length > 1
+            ? Math.sqrt(downPnls.map(p => p * p).reduce((a, b) => a + b, 0) / downPnls.length)
+            : 0;
+        const sortinoRatio = downStd > 0 ? (avgPnl / downStd).toFixed(2) : avgPnl > 0 ? '∞' : '0.00';
+
         res.json({
             success: true,
-            trades: trades.reverse(), // Frontend parses history backwards usually (recent up top)
+            trades: trades.reverse(),
             chartData: chartData.filter((_, idx) => idx % Math.ceil(chartData.length / 50) === 0 || idx === chartData.length - 1),
             netProfit,
             netProfitPct,
@@ -227,8 +458,12 @@ app.post('/api/backtest', async (req, res) => {
             maxDrawdownPct,
             maxDrawdownAbs,
             totalTrades: totalClosed,
-            winningTrades: winningTrades,
-            buyAndHoldReturn: buyHoldReturn.toFixed(2)
+            winningTrades,
+            buyAndHoldReturn: buyHoldReturn.toFixed(2),
+            winRateStr: winRatePct,
+            profitFactor,
+            sharpeRatio,
+            sortinoRatio,
         });
 
     } catch (e) {
@@ -236,5 +471,15 @@ app.post('/api/backtest', async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     }
 });
+
+// Serve built Vite frontend (production)
+if (existsSync(join(__dirname, 'dist'))) {
+    app.use(express.static(join(__dirname, 'dist')));
+    app.get('*', (req, res) => {
+        if (!req.path.startsWith('/api')) {
+            res.sendFile(join(__dirname, 'dist', 'index.html'));
+        }
+    });
+}
 
 app.listen(PORT, () => console.log(`Backend Engine running natively on http://localhost:${PORT}`));
