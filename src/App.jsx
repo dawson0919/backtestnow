@@ -761,28 +761,29 @@ export default function App() {
                                         <div className="price">免費 <span>/ 註冊即享</span></div>
                                         <ul className="price-features">
                                             <li><CheckCircle2 size={18} color="var(--success)" /> <strong>每月 30 次</strong> 回測額度</li>
-                                            <li><CheckCircle2 size={18} color="var(--success)" /> AI 參數優化建議 (基礎)</li>
-                                            <li><CheckCircle2 size={18} color="var(--success)" /> 2 年歷史數據回溯</li>
-                                            <li><CheckCircle2 size={18} color="var(--success)" /> 標準績效報告輸出</li>
+                                            <li><CheckCircle2 size={18} color="var(--success)" /> AI 參數優化建議</li>
+                                            <li><CheckCircle2 size={18} color="var(--success)" /> 深度歷史數據回溯</li>
+                                            <li><CheckCircle2 size={18} color="var(--success)" /> 完整績效報告輸出</li>
+                                            <li><CheckCircle2 size={18} color="var(--success)" /> 一鍵匯出優化腳本代碼</li>
                                         </ul>
                                         <button className="btn btn-outline" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setStep(1)}>開始免費體驗</button>
                                     </div>
                                     <div className="price-card featured">
                                         <h3>進階會員 (VIP)</h3>
-                                        <div className="price">$29.9 <span>/ 每月</span></div>
+                                        <div className="price">免費 <span>/ 申請解鎖</span></div>
                                         <ul className="price-features">
-                                            <li><CheckCircle2 size={18} color="var(--success)" /> <strong>無限次數</strong> 深度回測測試</li>
-                                            <li><CheckCircle2 size={18} color="var(--success)" /> 進階蒙地卡羅風險分析</li>
-                                            <li><CheckCircle2 size={18} color="var(--success)" /> 全歷史數據 (10年+) 存取</li>
+                                            <li><CheckCircle2 size={18} color="var(--success)" /> <strong>無限次數</strong> 回測額度</li>
+                                            <li><CheckCircle2 size={18} color="var(--success)" /> AI 參數優化建議</li>
+                                            <li><CheckCircle2 size={18} color="var(--success)" /> 深度歷史數據回溯</li>
+                                            <li><CheckCircle2 size={18} color="var(--success)" /> 完整績效報告輸出</li>
                                             <li><CheckCircle2 size={18} color="var(--success)" /> 一鍵匯出優化腳本代碼</li>
-                                            <li><Shield size={18} color="var(--accent)" /> 優先計算伺服器資源</li>
                                         </ul>
-                                        <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setStep(1)}>立即升級進階版</button>
+                                        <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setStep(1)}>申請解鎖 VIP</button>
                                     </div>
                                 </div>
                                 <p style={{ marginTop: '3rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                                     <AlertCircle size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
-                                    預期達成效果：透過科學化回測減少 40% 的資金虧損風險，並提升策略在震盪市中的穩定度。
+                                    上傳您的交易平台帳號截圖申請 VIP，經管理員審核通過後即可享受無限次回測。
                                 </p>
                             </section>
                         </div>
