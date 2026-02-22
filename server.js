@@ -45,9 +45,24 @@ function mapInterval(timeframe) {
 const ADMIN_EMAIL = 'nbamoment@gmail.com';
 const BASIC_MONTHLY_LIMIT = 30;
 
+// ── In-memory fallback tracking (used when Supabase is unavailable) ──
+// Resets on server restart; Supabase is the source of truth when online.
+const _memUsage = new Map();   // key: "userId:YYYY-MM" → count
+const _memRoles = new Map();   // key: userId → role
+
+function _memKey(userId) {
+    const month = new Date().toISOString().slice(0, 7);
+    return `${userId}:${month}`;
+}
+
 // Helper: get or create user role
 async function getUserRole(userId, email) {
-    if (!supabase) return email === ADMIN_EMAIL ? 'admin' : 'basic';
+    if (!supabase) {
+        if (_memRoles.has(userId)) return _memRoles.get(userId);
+        const role = email === ADMIN_EMAIL ? 'admin' : 'basic';
+        _memRoles.set(userId, role);
+        return role;
+    }
     const { data } = await supabase
         .from('user_roles')
         .select('role')
@@ -56,7 +71,6 @@ async function getUserRole(userId, email) {
 
     if (data) return data.role;
 
-    // First login — check if this is the admin email
     const role = email === ADMIN_EMAIL ? 'admin' : 'basic';
     await supabase.from('user_roles').upsert({ user_id: userId, email, role });
     return role;
@@ -64,8 +78,8 @@ async function getUserRole(userId, email) {
 
 // Helper: get this month's usage count
 async function getMonthlyUsage(userId) {
-    if (!supabase) return 0;
-    const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+    if (!supabase) return _memUsage.get(_memKey(userId)) || 0;
+    const month = new Date().toISOString().slice(0, 7);
     const { data } = await supabase
         .from('usage_tracking')
         .select('count')
@@ -77,14 +91,18 @@ async function getMonthlyUsage(userId) {
 
 // Helper: increment monthly usage
 async function incrementUsage(userId) {
-    if (!supabase) return;
+    if (!supabase) {
+        const key = _memKey(userId);
+        _memUsage.set(key, (_memUsage.get(key) || 0) + 1);
+        return;
+    }
     const month = new Date().toISOString().slice(0, 7);
     const { data } = await supabase
         .from('usage_tracking')
         .select('id, count')
         .eq('user_id', userId)
         .eq('month', month)
-        .single();
+        .maybeSingle();
 
     if (data) {
         await supabase.from('usage_tracking').update({ count: data.count + 1 }).eq('id', data.id);

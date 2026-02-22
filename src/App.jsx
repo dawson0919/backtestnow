@@ -1344,12 +1344,25 @@ export default function App() {
                                 <div className="glass-panel" style={{ padding: '2rem' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                                         <h3 style={{ color: 'var(--text-highlight)' }}>🤖 AI 優化後的 Pine Script</h3>
-                                        <button className="btn btn-outline" onClick={() => {
-                                            navigator.clipboard.writeText(results.rewrittenCode);
-                                            alert('代碼已複製到剪貼簿！');
-                                        }}>
-                                            <FileText size={16} /> 複製代碼
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                            <button className="btn btn-outline" onClick={() => {
+                                                navigator.clipboard.writeText(results.rewrittenCode);
+                                                alert('代碼已複製到剪貼簿！');
+                                            }}>
+                                                <FileText size={16} /> 複製代碼
+                                            </button>
+                                            <button className="btn btn-primary" onClick={() => {
+                                                const blob = new Blob([results.rewrittenCode], { type: 'text/plain' });
+                                                const url = URL.createObjectURL(blob);
+                                                const a = document.createElement('a');
+                                                a.href = url;
+                                                a.download = `AI_${results.asset || 'strategy'}_optimized.pine`;
+                                                a.click();
+                                                URL.revokeObjectURL(url);
+                                            }}>
+                                                <Download size={16} /> 下載 .pine 檔
+                                            </button>
+                                        </div>
                                     </div>
 
                                     {/* Optimized Parameters Summary */}
